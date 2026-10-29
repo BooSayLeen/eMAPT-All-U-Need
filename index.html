@@ -3,42 +3,51 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>eMAPT Trainer</title>
-  <meta name="description" content="Interactive, animated study app for the INE eMAPT mobile application penetration testing exam.">
-  <meta name="theme-color" content="#060a13">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📱</text></svg>">
+  <title>eMAPT Line</title>
+  <meta name="description" content="A transit-map game for the INE eMAPT exam: 8 lines, one per exam domain, from your first adb command to eMAPT Central.">
+  <meta name="theme-color" content="#f3eee2">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='0' y='12' width='32' height='8' fill='%231f8a4c'/><circle cx='16' cy='16' r='9' fill='white' stroke='%231c1b19' stroke-width='4'/></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800;900&family=Overpass+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <canvas id="bg" aria-hidden="true"></canvas>
-  <div class="scanlines" aria-hidden="true"></div>
+  <!-- Shared rubber-stamp ink texture, used by every stamp on the page -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <filter id="ink" x="-5%" y="-5%" width="110%" height="110%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="4" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.4" xChannelSelector="R" yChannelSelector="G" result="rough"/>
+        <feTurbulence type="fractalNoise" baseFrequency="0.55" numOctaves="3" seed="11" result="grain"/>
+        <feColorMatrix in="grain" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -7 5.2" result="holes"/>
+        <feComposite in="rough" in2="holes" operator="in"/>
+      </filter>
+    </defs>
+  </svg>
 
-  <header class="topbar">
-    <a href="#/" class="logo" aria-label="eMAPT Trainer home">
-      <span class="logo-mark">◢◤</span>
-      <span class="glitch" data-text="eMAPT//TRAINER">eMAPT//TRAINER</span>
-    </a>
-    <nav class="nav" aria-label="Main">
-      <a href="#/" data-route="hq"><span class="ni">🛰️</span><span class="nl">HQ</span></a>
-      <a href="#/map" data-route="map"><span class="ni">🪐</span><span class="nl">Map</span></a>
-      <a href="#/train" data-route="train"><span class="ni">⚔️</span><span class="nl">Train</span></a>
-      <a href="#/exam" data-route="exam"><span class="ni">⏱️</span><span class="nl">Mock Exam</span></a>
-      <a href="#/frida" data-route="frida"><span class="ni">🪝</span><span class="nl">Frida Lab</span></a>
-      <a href="#/profile" data-route="profile"><span class="ni">👤</span><span class="nl">Profile</span></a>
-    </nav>
-    <div class="hud-xp" id="hud-xp" title="Your level and XP"></div>
+  <header class="top">
+    <div class="top-in">
+      <a href="#/" class="logo" aria-label="eMAPT Line, network map">
+        <span class="logo-plate">eMAPT</span><span class="logo-word">Line</span>
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="#/" data-r="map">Map</a>
+        <a href="#/pass" data-r="pass">Travel Pass</a>
+      </nav>
+      <div class="hud" id="hud" aria-label="Stations cleared"></div>
+    </div>
+    <div class="stripe" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
   </header>
 
   <main id="view" tabindex="-1"></main>
 
-  <div id="fx-layer" aria-hidden="true"></div>
-  <div id="toast" role="status" aria-live="polite"></div>
+  <footer class="foot">
+    <p>Study game for the INE eMAPT exam. Built on OWASP MASVS / MASTG. Not affiliated with INE.</p>
+  </footer>
 
   <script src="js/data.js"></script>
-  <script src="js/fx.js"></script>
+  <script src="js/metro.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

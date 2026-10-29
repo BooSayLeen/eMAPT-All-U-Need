@@ -1,45 +1,47 @@
 <div align="center">
 
-# 📱 eMAPT//TRAINER
+# 🚇 eMAPT Line
 
-**An interactive, animated study app for the INE eMAPT exam (Mobile Application Penetration Tester)**
+**A transit-map game for the INE eMAPT exam (Mobile Application Penetration Tester).**
+Ride from your first `adb` command to **eMAPT Central**.
 
-![Questions](https://img.shields.io/badge/questions-99-22d3ee)
-![Domains](https://img.shields.io/badge/exam_domains-8-a78bfa)
-![Mock](https://img.shields.io/badge/mock_exam-45_Qs-f472b6)
-![Stack](https://img.shields.io/badge/stack-plain_HTML%2FJS-a3e635)
+![Lines](https://img.shields.io/badge/lines-8_exam_domains-1f5fbf)
+![Playable](https://img.shields.io/badge/playable-Lines_1–2-1f8a4c)
+![Questions](https://img.shields.io/badge/question_bank-99-e0a100)
+![Stack](https://img.shields.io/badge/stack-plain_HTML%2FJS-5b5a56)
 
 </div>
 
-## ✨ What's inside
+## How it works
 
-| | Page | What it does |
-|:-:|---|---|
-| 🛰️ | **HQ** | Animated dashboard: readiness ring (weighted by exam domain), skill radar, streak, and your "next mission" |
-| 🪐 | **Map** | The 8 exam domains as orbiting planets, sized by exam weight. Click one for its briefing |
-| ⚔️ | **Train** | Spaced-repetition quiz: wrong answers return in 10 min, right ones after 1 → 3 → 7 → 16 days. Combos, XP, confetti |
-| ⏱️ | **Mock Exam** | 45 questions drawn by real exam weight, a timer, flags, a PASS/FAIL stamp, a per-domain breakdown, and a review of misses |
-| 🪝 | **Frida Lab** | A script builder for the 3 Frida moves (spy · force · call) plus the lab-app attack flow |
-| 👤 | **Profile** | Level and XP, settings (sound, animations), export/import of progress between devices |
+| | |
+|---|---|
+| 🗺️ **Network map** | 8 coloured lines, one for each exam domain, in learning order: Foundations → Threat Modeling → Static → RE → Dynamic → API → Malware → Reporting → **eMAPT Central** |
+| 🚉 **Station** | A short **briefing** (a beginner lesson, sometimes with a diagram), then a **challenge**, then a **ticket stamp** |
+| 🧩 **6 challenge types** | Terminal (type the real command) · Spot the bug (tap the bad line) · Fill the hook (Frida) · Match · Order the steps · Multiple-choice question |
+| 🚆 **The train** | Stations open in order. Clear one and the train moves along the map |
+| 🎫 **Travel Pass** | All your stamps. "On time" means no wrong tries. Export/import moves your progress between devices |
 
-Progress is saved **in your browser only**. Use Profile → Export/Import to move it between your phone and PC.
+**Step 1 (now):** the map, the engine, and **Line 1 Foundations + Line 2 Threat Modeling** (10 stations).
+**Step 2 (next):** Lines 3–8, a timed "Rush Hour" exam for each line, and eMAPT Central (the full 45-question mock).
 
-## 🧱 How it's built
+Progress is saved **in your browser only**.
 
-- Plain **HTML + CSS + JavaScript**, with no build step and no framework. GitHub Pages serves the files as they are.
-- `js/data.js`: **all questions and domains** (edit this file to add questions).
-- `js/app.js`: router, progress store, spaced repetition, and all pages.
-- `js/fx.js`: animated background, confetti, sound effects.
-- `css/style.css`: the "mobile HUD" theme, responsive down to phone size.
+## Files
+
+- `js/metro.js`: **the map and all station content** (briefings and challenges). The task formats are documented at the top of the file.
+- `js/data.js`: the **question bank** (99 multiple-choice questions). Stations use these with `{ type: "mcq", id: "f2" }`.
+- `js/app.js`: router, progress, map drawing, train animation, and the 6 challenge engines.
+- `css/style.css`: the light, printed-transit-map style.
 
 ### Add a question
 Add an object to `window.QUESTIONS` in [`js/data.js`](js/data.js):
 ```js
 { id: "s19", d: "static", q: "Question?", o: ["A", "B", "C", "D"], a: 0, e: "Why A is right, explained simply." },
 ```
-`d` is one of `static, dynamic, api, found, threat, re, malware, report`, and `a` is the index of the correct option. Options are shuffled when shown.
+`d` is one of `static, dynamic, api, found, threat, re, malware, report`. `a` is the index of the correct option. Options are shuffled when shown.
 
-## 🚀 Run locally
+## Run locally
 ```bash
 python3 -m http.server 8000   # then open http://localhost:8000
 ```

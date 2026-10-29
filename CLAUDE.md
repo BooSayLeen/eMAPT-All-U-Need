@@ -10,10 +10,12 @@ commit **only** the `.enc` file (the plain file is git-ignored), and copy the pl
 
 - The owner is new to GitHub. Do all the git work, commit and push directly to `main`, and explain things simply.
 - No build step: plain HTML/CSS/JS. Keep it that way unless the owner agrees otherwise.
-- Questions live only in `js/data.js` (format in README). Keep ids unique, give 4 options each, and write beginner-friendly explanations.
+- MCQ questions live in `js/data.js` (format in README). Station content (briefings and challenges) lives in `js/metro.js`. Keep ids unique, give 4 options each, and write beginner-friendly explanations.
 - Before pushing UI changes: serve locally (`python3 -m http.server`) and check desktop and phone widths in Playwright, with no console errors.
 - After each session, update the documentation (above) and `eMAPT-Prep/PROGRESS.md`.
 
 ## Phase plan
-- **Phase 1 (done):** HQ dashboard, orbit map, spaced-repetition training, 45-Q mock exam, Frida builder, profile/export.
-- **Phase 2 (next):** flashcards, interactive labs (step-by-step with hints), searchable cheatsheet, more questions (target 150+).
+- **Phase 1 (rejected 2026-10-29):** a dark "HUD" site with pages. The owner wanted something game-like, light and unique, so it was replaced.
+- **Metro Step 1 (done 2026-10-29):** "eMAPT Line", a transit-map game with 8 lines (one per domain), stations (briefing → challenge → stamp), 6 challenge types, Travel Pass. Lines 1–2 are playable. Content is in `js/metro.js`.
+- **Metro Step 2 (next):** content for Lines 3–8, a "Rush Hour" timed exam per line, and eMAPT Central (the 45-Q mock).
+- Style rules: light paper, flat line colours, signage type (Overpass). No gradients, glow, glassmorphism or emoji icons.

@@ -1,565 +1,650 @@
-// eMAPT Trainer: app logic (router, progress store, spaced repetition, views).
-(function () {
+// eMAPT Line: router, progress store, network map, stations and the 6 challenge engines.
+(() => {
   "use strict";
-  const DOMAINS = window.DOMAINS, QUESTIONS = window.QUESTIONS, FX = window.FX;
-  const D = Object.fromEntries(DOMAINS.map((d) => [d.key, d]));
+
+  const M = window.METRO;
+  const Q = {};
+  (window.QUESTIONS || []).forEach((q) => (Q[q.id] = q));
+
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const view = $("#view");
-
-  // ───────────── Store (localStorage, safely wrapped) ─────────────
-  const KEY = "emapt-trainer-v1";
-  const fresh = () => ({ xp: 0, cards: {}, streak: { count: 0, last: "" }, exams: [], settings: { sound: true, motion: true }, answered: 0, correct: 0 });
-  let S = fresh();
-  try { const raw = localStorage.getItem(KEY); if (raw) S = Object.assign(fresh(), JSON.parse(raw)); } catch (e) { /* storage unavailable */ }
-  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } };
-  function applySettings() {
-    FX.soundOn = !!S.settings.sound;
-    document.body.classList.toggle("no-motion", !S.settings.motion);
-  }
-  applySettings();
-
-  // ───────────── Leveling ─────────────
-  const TITLES = ["Script Kiddie", "APK Explorer", "Manifest Reader", "Smali Whisperer", "Frida Hooker",
-    "Pinning Breaker", "IPC Hunter", "API Breaker", "Mobile Pentester", "eMAPT Ready", "MAS Legend"];
-  const levelFor = (xp) => Math.floor(Math.sqrt(xp / 60)) + 1;
-  const xpFor = (lvl) => 60 * (lvl - 1) * (lvl - 1);
-  const title = (lvl) => TITLES[Math.min(TITLES.length - 1, lvl - 1)];
-
-  function addXP(n, x, y) {
-    const before = levelFor(S.xp);
-    S.xp += n; save();
-    if (x != null) FX.floatText("+" + n + " XP", x, y, "#a3e635");
-    const after = levelFor(S.xp);
-    renderHud();
-    if (after > before) levelUp(after);
-  }
-  function levelUp(lvl) {
-    FX.sfx.level(); FX.confetti(innerWidth / 2, innerHeight / 2, 140);
-    const el = document.createElement("div");
-    el.className = "levelup";
-    el.innerHTML = `<div class="box"><div class="eyebrow">Level up</div><div class="lv grad">LV ${lvl}</div>
-      <h2>${esc(title(lvl))}</h2><p class="muted">Tap anywhere to continue</p></div>`;
-    el.onclick = () => el.remove();
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 4000);
-  }
-  function renderHud() {
-    const lvl = levelFor(S.xp), a = xpFor(lvl), b = xpFor(lvl + 1);
-    $("#hud-xp").innerHTML = `<span class="lvl">LV ${lvl}</span> · ${esc(title(lvl))}
-      <div class="bar"><i style="width:${Math.round(((S.xp - a) / (b - a)) * 100)}%"></i></div>`;
-  }
-
-  function touchStreak() {
-    const today = new Date().toISOString().slice(0, 10);
-    if (S.streak.last === today) return;
-    const y = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
-    S.streak.count = S.streak.last === y ? S.streak.count + 1 : 1;
-    S.streak.last = today; save();
-  }
-
-  // ───────────── Spaced repetition (Leitner boxes 0–5) ─────────────
-  const INTERVAL = [0, 6e4 * 10, 864e5, 864e5 * 3, 864e5 * 7, 864e5 * 16];
-  const card = (id) => S.cards[id] || { box: 0, due: 0, right: 0, wrong: 0 };
-  function grade(id, ok) {
-    const c = card(id);
-    if (ok) { c.box = Math.min(5, c.box + 1); c.right++; } else { c.box = 1; c.wrong++; }
-    c.due = Date.now() + INTERVAL[c.box];
-    S.cards[id] = c; S.answered++; if (ok) S.correct++;
-    touchStreak(); save();
-  }
-  const mastery = (dk) => {
-    const qs = QUESTIONS.filter((q) => q.d === dk);
-    return qs.reduce((s, q) => s + card(q.id).box / 5, 0) / qs.length;
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const shuffle = (a) => {
+    a = a.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
   };
-  const readiness = () => DOMAINS.reduce((s, d) => s + d.weight * mastery(d.key), 0);
-  const mastered = () => QUESTIONS.filter((q) => card(q.id).box >= 4).length;
-  const weakest = () => DOMAINS.slice().sort((a, b) => b.weight * (1 - mastery(b.key)) - a.weight * (1 - mastery(a.key)))[0];
-
-  // ───────────── Small UI helpers ─────────────
-  function ring(pct, label, color = "var(--cyan)", size = 120, stroke = 10) {
-    const r = 50 - stroke / 2, C = 2 * Math.PI * r;
-    return `<div class="ring" style="--size:${size}px;--rc:${color}">
-      <svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="${r}" fill="none" stroke-width="${stroke}"/>
-      <circle class="val" cx="50" cy="50" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round"
-        stroke-dasharray="${C}" stroke-dashoffset="${C}" data-target="${C * (1 - pct / 100)}"/></svg>
-      <div class="center"><div><b data-count="${Math.round(pct)}">0</b><small>${label}</small></div></div></div>`;
-  }
-  function animateRings(root = view) {
-    requestAnimationFrame(() => setTimeout(() => {
-      $$(".ring .val", root).forEach((c) => (c.style.strokeDashoffset = c.dataset.target));
-      $$("[data-count]", root).forEach((el) => FX.countUp(el, +el.dataset.count, 1400, el.dataset.suffix ?? "%"));
-      $$("[data-w]", root).forEach((el) => (el.style.width = el.dataset.w));
-    }, 60));
-  }
-  let toastT;
-  function toast(msg) {
-    const t = $("#toast"); t.textContent = msg; t.classList.add("show");
-    clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2600);
-  }
-  const domTag = (dk) => `<span class="tag" style="--c:${D[dk].color}">${D[dk].icon} ${esc(D[dk].name)}</span>`;
-
-  function radar() {
-    const cx = 210, cy = 190, R = 140, n = DOMAINS.length;
-    const pt = (i, k) => { const a = (Math.PI * 2 * i) / n - Math.PI / 2; return [cx + Math.cos(a) * R * k, cy + Math.sin(a) * R * k]; };
-    let grid = "";
-    [0.25, 0.5, 0.75, 1].forEach((k) => {
-      grid += `<polygon points="${DOMAINS.map((_, i) => pt(i, k).join(",")).join(" ")}" fill="none" stroke="rgba(120,160,255,.15)"/>`;
-    });
-    DOMAINS.forEach((_, i) => { const [x, y] = pt(i, 1); grid += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="rgba(120,160,255,.12)"/>`; });
-    const target = DOMAINS.map((_, i) => pt(i, 0.7).join(",")).join(" ");
-    const mine = DOMAINS.map((d, i) => pt(i, Math.max(0.04, mastery(d.key))).join(",")).join(" ");
-    const labels = DOMAINS.map((d, i) => {
-      const [x, y] = pt(i, 1.17);
-      return `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle">${d.icon} ${esc(d.short)}</text>`;
-    }).join("");
-    const dots = DOMAINS.map((d, i) => { const [x, y] = pt(i, Math.max(0.04, mastery(d.key))); return `<circle cx="${x}" cy="${y}" r="4" fill="${d.color}"/>`; }).join("");
-    return `<svg viewBox="0 0 420 380" role="img" aria-label="Mastery radar by domain">
-      <defs><linearGradient id="rg" x1="0" x2="1"><stop offset="0" stop-color="#22d3ee" stop-opacity=".55"/><stop offset="1" stop-color="#a78bfa" stop-opacity=".55"/></linearGradient>
-      <linearGradient id="sw" x1="0" x2="1"><stop offset="0" stop-color="#22d3ee" stop-opacity="0"/><stop offset="1" stop-color="#22d3ee" stop-opacity=".25"/></linearGradient></defs>
-      ${grid}
-      <path class="sweep" d="M${cx},${cy} L${cx + R},${cy} A${R},${R} 0 0,0 ${cx + R * Math.cos(-0.5)},${cy + R * Math.sin(-0.5)} Z" fill="url(#sw)"/>
-      <polygon points="${target}" fill="none" stroke="#fbbf24" stroke-dasharray="4 4" opacity=".7"/>
-      <g class="poly"><polygon points="${mine}" fill="url(#rg)" stroke="#22d3ee" stroke-width="2"/>${dots}</g>
-      ${labels}</svg>`;
-  }
-
-  // ───────────── Views ─────────────
-  const routes = {};
-  let cleanup = null;
-  function go() {
-    if (cleanup) { cleanup(); cleanup = null; }
-    const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
-    const name = path || "hq";
-    const params = new URLSearchParams(qs || "");
-    $$(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === name));
-    view.classList.remove("view-enter"); void view.offsetWidth; view.classList.add("view-enter");
-    (routes[name] || routes.hq)(params);
-    scrollTo({ top: 0 });
-    renderHud();
-  }
-  addEventListener("hashchange", go);
-
-  // ── HQ ──
-  routes.hq = function () {
-    const rd = readiness(), w = weakest(), lvl = levelFor(S.xp);
-    const best = S.exams.length ? Math.max(...S.exams.map((e) => e.score)) : null;
-    const layers = DOMAINS.map((d) => `<div class="layer" style="--c:${d.color}"><div class="lh"><span>${d.icon} ${esc(d.short)}</span><span>${Math.round(mastery(d.key) * 100)}%</span></div>
-      <div class="lb"><i data-w="${Math.max(3, mastery(d.key) * 100)}%"></i></div></div>`).join("");
-    view.innerHTML = `
-    <section class="hero">
-      <div>
-        <div class="eyebrow">Mission control · LV ${lvl} ${esc(title(lvl))}</div>
-        <h1>Break the app.<br><span class="grad">Pass the eMAPT.</span></h1>
-        <p class="terminal-line" id="tw"></p>
-        <p class="muted">${QUESTIONS.length} questions across 8 exam domains, spaced repetition that brings back what you miss,
-          a timed 45-question mock exam, and a Frida script builder. Your progress stays in this browser.</p>
-        <div class="row" style="margin-top:18px">
-          <a class="btn" href="#/train">⚔️ Start training</a>
-          <a class="btn violet" href="#/exam">⏱️ Mock exam</a>
-          <a class="btn ghost" href="#/map">🪐 Explore the map</a>
-        </div>
-      </div>
-      <div class="phone" aria-label="Domain mastery shown on a phone"><div class="screen"><div class="scan"></div>${layers}
-        <div class="verdict">${rd >= 70 ? "✅ EXAM READY" : "▶ SCANNING SKILLS…"}</div></div></div>
-    </section>
-
-    <div class="grid g4" style="margin-top:28px">
-      <div class="card hover stat">${ring(rd, "ready", rd >= 70 ? "#34d399" : "#22d3ee", 96, 10)}<div><div class="lbl">Exam readiness</div><div class="muted" style="font-size:12px">weighted by domain · target 70%</div></div></div>
-      <div class="card hover stat"><span class="flame">🔥</span><div><div class="big" data-count="${S.streak.count}" data-suffix="">0</div><div class="lbl">day streak</div></div></div>
-      <div class="card hover stat"><span style="font-size:34px">🏆</span><div><div class="big" data-count="${mastered()}" data-suffix="">0</div><div class="lbl">mastered / ${QUESTIONS.length}</div></div></div>
-      <div class="card hover stat"><span style="font-size:34px">🎯</span><div><div class="big">${best == null ? "-" : best + "%"}</div><div class="lbl">best mock exam</div></div></div>
-    </div>
-
-    <div class="grid g2" style="margin-top:18px">
-      <div class="card radar"><div class="eyebrow">Skill radar</div><p class="muted" style="margin:4px 0 0;font-size:13px">Filled = your mastery · dashed = the 70% pass line</p>${radar()}</div>
-      <div class="grid" style="align-content:start">
-        <div class="card hover mission" style="--c:${w.color}">
-          <div class="mi">${w.icon}</div>
-          <div style="flex:1"><div class="eyebrow">Next mission</div><h3>${esc(w.name)}</h3>
-            <p class="muted" style="margin:0 0 12px">Biggest point gain available: worth ${w.weight}% of the exam, you're at ${Math.round(mastery(w.key) * 100)}%.</p>
-            <a class="btn" href="#/train?d=${w.key}">Train ${esc(w.short)} →</a></div>
-        </div>
-        <div class="card dom-bars"><div class="eyebrow" style="margin-bottom:6px">Exam weight vs your mastery</div>
-          ${DOMAINS.map((d) => `<div class="db" style="--c:${d.color}"><span title="${esc(d.name)}">${d.icon}</span>
-            <div class="track" title="${esc(d.name)}: ${d.weight}% of exam"><i data-w="${mastery(d.key) * 100}%"></i></div>
-            <span class="pct">${d.weight}%</span></div>`).join("")}
-        </div>
-      </div>
-    </div>`;
-    const lines = S.answered === 0
-      ? "> agent connected. first target: answer 10 questions."
-      : `> ${S.answered} answers logged · accuracy ${Math.round((S.correct / S.answered) * 100)}% · keep hooking.`;
-    FX.typewriter($("#tw"), lines);
-    animateRings();
+  const shuffledIdx = (n) => {
+    const base = [...Array(n).keys()];
+    let s = shuffle(base);
+    while (n > 1 && s.every((v, i) => v === i)) s = shuffle(base);
+    return s;
   };
 
-  // ── MAP ──
-  routes.map = function (p) {
-    const sel = p.get("d") || "static";
-    const n = DOMAINS.length;
-    const planets = DOMAINS.map((d, i) => {
-      const a = (360 / n) * i, rad = 41; // % of container
-      const size = 46 + d.weight * 2.2;
-      return `<div class="planet" style="transform:rotate(${a}deg) translate(0,-${rad}%) rotate(-${a}deg);
-          left:50%;top:50%">
-        <div class="pl-inner"><button style="--c:${d.color};--s:${size}px" data-d="${d.key}" class="${d.key === sel ? "sel" : ""}"
-          aria-label="${esc(d.name)}, ${d.weight}% of the exam">${d.icon}</button>
-          <div class="pl-label" style="--s:${size}px">${esc(d.short)} · ${d.weight}%</div></div></div>`;
-    }).join("");
-    view.innerHTML = `
-      <div class="eyebrow">The exam universe</div>
-      <h1>8 domains. <span class="grad">One orbit.</span></h1>
-      <p class="muted">Planet size = weight in the exam. Hover to pause the orbit, click a planet to open its briefing.</p>
-      <div class="orbit-wrap" style="margin-top:20px">
-        <div class="orbit"><div class="ring-line"></div><div class="ring-line r2"></div>
-          <div class="core"><div><b>APK</b>12h · 45 Qs<br>pass 70%</div></div>
-          <div class="spin">${planets}</div></div>
-        <div class="card dom-panel" id="dp"></div>
-      </div>`;
-    // keep planets on the ring: convert % translate to px based on container size
-    const orbit = $(".orbit");
-    function place() {
-      const R = orbit.clientWidth * 0.41, k = Math.min(1, orbit.clientWidth / 560);
-      $$(".planet", orbit).forEach((pl, i) => {
-        pl.querySelectorAll("[style*='--s']").forEach((el) => el.style.setProperty("--s", (46 + DOMAINS[i].weight * 2.2) * k + "px"));
-        const a = (Math.PI * 2 * i) / n - Math.PI / 2;
-        pl.style.transform = `translate(${Math.cos(a) * R}px, ${Math.sin(a) * R}px)`;
-      });
-    }
-    place(); addEventListener("resize", place);
-    cleanup = () => removeEventListener("resize", place);
-    function panel(dk) {
-      const d = D[dk], m = mastery(dk), qn = QUESTIONS.filter((q) => q.d === dk).length;
-      $("#dp").style.setProperty("--c", d.color);
-      $("#dp").innerHTML = `<div class="row" style="justify-content:space-between"><span style="font-size:42px">${d.icon}</span>${ring(m * 100, "mastery", d.color, 90, 9)}</div>
-        <h2 style="margin-top:8px">${esc(d.name)}</h2>
-        <div class="row"><span class="tag" style="--c:${d.color}">${d.weight}% of exam</span><span class="tag" style="--c:#94a3b8">${qn} questions</span></div>
-        <ul>${d.topics.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
-        <a class="btn" href="#/train?d=${dk}">⚔️ Train this domain</a>`;
-      $$(".planet button").forEach((b) => b.classList.toggle("sel", b.dataset.d === dk));
-      animateRings($("#dp"));
-    }
-    $$(".planet button").forEach((b) => (b.onclick = () => { FX.sfx.click(); panel(b.dataset.d); }));
-    panel(sel);
-  };
-
-  // ── TRAIN ──
-  routes.train = function (p) {
-    const pre = p.get("d");
-    let chosen = new Set(pre ? [pre] : DOMAINS.map((d) => d.key)), count = 10, mode = "smart";
-    function setup() {
-      const due = QUESTIONS.filter((q) => chosen.has(q.d) && card(q.id).box > 0 && card(q.id).due <= Date.now()).length;
-      view.innerHTML = `<div class="eyebrow">Training grounds</div><h1>Pick your <span class="grad">targets</span></h1>
-        <p class="muted">Smart mode serves questions you got wrong and that are due first, then new ones. Wrong answers come back in 10 minutes, right ones after 1 → 3 → 7 → 16 days.</p>
-        <div class="card" style="margin-top:20px">
-          <h3>Domains</h3><div class="row" id="chips">${DOMAINS.map((d) => `<span class="chip ${chosen.has(d.key) ? "on" : ""}" style="--c:${d.color}" data-d="${d.key}" role="button" tabindex="0">${d.icon} ${esc(d.short)}</span>`).join("")}</div>
-          <h3 style="margin-top:20px">Mode</h3><div class="row" id="modes">
-            <span class="chip ${mode === "smart" ? "on" : ""}" data-m="smart" role="button" tabindex="0">🧠 Smart (${due} due)</span>
-            <span class="chip ${mode === "random" ? "on" : ""}" data-m="random" role="button" tabindex="0">🎲 Random</span></div>
-          <h3 style="margin-top:20px">Length</h3><div class="row" id="lens">${[5, 10, 20].map((n) => `<span class="chip ${count === n ? "on" : ""}" data-n="${n}" role="button" tabindex="0">${n} questions</span>`).join("")}</div>
-          <div class="row" style="margin-top:24px"><button class="btn" id="go" ${chosen.size ? "" : "disabled"}>⚔️ Begin run</button>
-            <span class="muted" style="font-size:13px">Keys: <span class="kbd">1-4</span> answer · <span class="kbd">Enter</span> next</span></div>
-        </div>`;
-      const act = (el, fn) => { el.onclick = fn; el.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); } }; };
-      $$("#chips .chip").forEach((c) => act(c, () => { const k = c.dataset.d; chosen.has(k) ? chosen.delete(k) : chosen.add(k); setup(); }));
-      $$("#modes .chip").forEach((c) => act(c, () => { mode = c.dataset.m; setup(); }));
-      $$("#lens .chip").forEach((c) => act(c, () => { count = +c.dataset.n; setup(); }));
-      $("#go").onclick = start;
-    }
-    function pick() {
-      const pool = QUESTIONS.filter((q) => chosen.has(q.d));
-      if (mode === "random") return shuffle(pool).slice(0, count);
-      const now = Date.now();
-      const due = shuffle(pool.filter((q) => card(q.id).box > 0 && card(q.id).due <= now)).sort((a, b) => card(a.id).box - card(b.id).box);
-      const fresh = shuffle(pool.filter((q) => card(q.id).box === 0));
-      const later = shuffle(pool.filter((q) => card(q.id).box > 0 && card(q.id).due > now)).sort((a, b) => card(a.id).due - card(b.id).due);
-      return [...due, ...fresh, ...later].slice(0, count);
-    }
-    let run, idx, combo, score, keyHandler;
-    function start() { run = pick(); idx = 0; combo = 0; score = 0; ask(); }
-    function ask() {
-      const q = run[idx];
-      const order = shuffle([0, 1, 2, 3]);
-      view.innerHTML = `<div class="quiz-top"><span class="mono muted">${idx + 1} / ${run.length}</span>
-          <div class="progress"><i style="width:${(idx / run.length) * 100}%"></i></div>
-          <span class="combo" id="combo">${combo >= 2 ? "🔥 x" + combo : ""}</span></div>
-        <div class="card qcard"><div class="row" style="justify-content:space-between">${domTag(q.d)}<span class="muted mono" style="font-size:12px">box ${card(q.id).box}/5</span></div>
-          <div class="q">${esc(q.q)}</div>
-          <div class="opts">${order.map((oi, k) => `<button class="opt" data-i="${oi}"><span class="k">${k + 1}</span><span>${esc(q.o[oi])}</span></button>`).join("")}</div>
-          <div id="after"></div></div>`;
-      let done = false;
-      function answer(btn) {
-        if (done) return; done = true;
-        const ok = +btn.dataset.i === q.a;
-        $$(".opt").forEach((b) => { b.disabled = true; if (+b.dataset.i === q.a) b.classList.add("right"); });
-        const r = btn.getBoundingClientRect();
-        grade(q.id, ok);
-        if (ok) {
-          combo++; score++; FX.sfx.right();
-          addXP(10 + (combo >= 3 ? 5 : 0), r.left + r.width / 2 - 40, r.top);
-          if (combo > 0 && combo % 5 === 0) { FX.confetti(r.left + r.width / 2, r.top, 70); toast(`🔥 ${combo} in a row!`); }
-        } else {
-          btn.classList.add("wrong"); combo = 0; FX.sfx.wrong(); addXP(2);
-        }
-        const cEl = $("#combo"); cEl.textContent = combo >= 2 ? "🔥 x" + combo : ""; cEl.classList.remove("pop"); void cEl.offsetWidth; cEl.classList.add("pop");
-        $("#after").innerHTML = `<div class="explain"><b>${ok ? "✅ Correct." : "❌ Not quite."}</b> ${esc(q.e)}</div>
-          <div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" id="next">${idx + 1 < run.length ? "Next →" : "Finish run"}</button></div>`;
-        $("#next").onclick = next; $("#next").focus({ preventScroll: true });
+  // ───────────── Geometry: lines, stations and the route the train follows ─────────────
+  const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const polyLen = (pts) => pts.slice(1).reduce((L, p, i) => L + dist(pts[i], p), 0);
+  function pointOn(pts, d) {
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], s = dist(a, b);
+      if (d <= s || i === pts.length - 1) {
+        const t = s ? Math.max(0, Math.min(d / s, 1)) : 0;
+        return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, ang: Math.atan2(b[1] - a[1], b[0] - a[0]) };
       }
-      $$(".opt").forEach((b) => (b.onclick = () => answer(b)));
-      if (keyHandler) removeEventListener("keydown", keyHandler);
-      keyHandler = (e) => {
-        if (/^[1-4]$/.test(e.key) && !done) answer($$(".opt")[+e.key - 1]);
-        else if (e.key === "Enter" && done && document.activeElement !== $("#next")) next();
-      };
-      addEventListener("keydown", keyHandler);
-      cleanup = () => removeEventListener("keydown", keyHandler);
+      d -= s;
     }
-    function next() { idx++; idx < run.length ? ask() : finish(); }
-    function finish() {
-      removeEventListener("keydown", keyHandler);
-      const pct = Math.round((score / run.length) * 100);
-      view.innerHTML = `<div class="card" style="text-align:center;padding:40px">
-        <div class="eyebrow">Run complete</div><h1>${pct >= 80 ? "Flawless hook. 🪝" : pct >= 60 ? "Solid run." : "Every miss is a lesson."}</h1>
-        <div style="display:flex;justify-content:center;margin:24px 0">${ring(pct, "accuracy", pct >= 70 ? "#34d399" : "#f472b6", 160, 10)}</div>
-        <p class="muted">${score} / ${run.length} correct. Missed questions are scheduled to come back soon.</p>
-        <div class="row" style="justify-content:center;margin-top:16px"><button class="btn" id="again">⚔️ Another run</button><a class="btn ghost" href="#/">🛰️ Back to HQ</a></div></div>`;
-      animateRings();
-      if (pct >= 80) setTimeout(() => FX.confetti(innerWidth / 2, innerHeight / 3, 120), 600);
-      $("#again").onclick = setup;
-    }
-    setup();
-  };
-
-  // ── EXAM ──
-  routes.exam = function () {
-    let minutes = 90;
-    function intro() {
-      view.innerHTML = `<div class="eyebrow">Mock exam</div><h1>The <span class="grad">45-question</span> gauntlet</h1>
-        <div class="grid g2" style="margin-top:20px">
-          <div class="card"><h3>Rules of engagement</h3>
-            <ul class="muted"><li>45 questions drawn by real exam weight (Static 9 · Dynamic 9 · API 7 · …)</li>
-            <li>No explanations until you submit, just like the real thing</li>
-            <li>Flag questions and jump with the grid</li><li><b style="color:var(--green)">70%</b> to pass</li></ul></div>
-          <div class="card"><h3>Timer</h3><p class="muted">The real exam gives 12 h for theory + 2 labs. Practise the theory part under pressure:</p>
-            <div class="row" id="tm">${[45, 90, 120].map((m) => `<span class="chip ${m === minutes ? "on" : ""}" data-m="${m}" role="button" tabindex="0">${m} min</span>`).join("")}</div>
-            <button class="btn violet" id="start" style="margin-top:20px">⏱️ Start exam</button></div></div>
-        ${S.exams.length ? `<div class="card" style="margin-top:18px"><h3>Past attempts</h3>${histTable()}</div>` : ""}`;
-      $$("#tm .chip").forEach((c) => (c.onclick = () => { minutes = +c.dataset.m; intro(); }));
-      $("#start").onclick = begin;
-    }
-    let qs, ans, flags, cur, end, timer;
-    function begin() {
-      qs = [];
-      DOMAINS.forEach((d) => { qs.push(...shuffle(QUESTIONS.filter((q) => q.d === d.key)).slice(0, d.mock)); });
-      qs = shuffle(qs).map((q) => ({ q, order: shuffle([0, 1, 2, 3]) }));
-      ans = Array(qs.length).fill(null); flags = Array(qs.length).fill(false); cur = 0;
-      end = Date.now() + minutes * 60e3;
-      timer = setInterval(tickT, 1000);
-      cleanup = () => clearInterval(timer);
-      draw();
-    }
-    function tickT() {
-      const left = Math.max(0, end - Date.now()), el = $("#timer");
-      if (!el) return;
-      const m = Math.floor(left / 60e3), s = Math.floor((left % 60e3) / 1000);
-      el.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-      el.classList.toggle("low", left < 5 * 60e3);
-      if (left <= 0) { toast("⏰ Time's up! Submitting…"); submit(); }
-    }
-    function draw() {
-      const { q, order } = qs[cur];
-      view.innerHTML = `<div class="exam-layout">
-        <div class="card qcard"><div class="row" style="justify-content:space-between"><span class="mono muted">Question ${cur + 1} of ${qs.length}</span>
-            <button class="chip ${flags[cur] ? "on" : ""}" id="flag" style="--c:var(--amber)">🚩 ${flags[cur] ? "Flagged" : "Flag"}</button></div>
-          <div class="q">${esc(q.q)}</div>
-          <div class="opts">${order.map((oi, k) => `<button class="opt ${ans[cur] === oi ? "picked" : ""}" data-i="${oi}"><span class="k">${"ABCD"[k]}</span><span>${esc(q.o[oi])}</span></button>`).join("")}</div>
-          <div class="row" style="justify-content:space-between;margin-top:20px">
-            <button class="btn ghost" id="prev" ${cur === 0 ? "disabled" : ""}>← Prev</button>
-            <button class="btn ghost" id="nxt" ${cur === qs.length - 1 ? "disabled" : ""}>Next →</button></div></div>
-        <div class="card"><div class="timer" id="timer">--:--</div><p class="muted" style="text-align:center;font-size:13px;margin:4px 0 14px">${ans.filter((a) => a !== null).length} / ${qs.length} answered</p>
-          <div class="navgrid">${qs.map((_, i) => `<button class="${ans[i] !== null ? "ans" : ""} ${flags[i] ? "flag" : ""} ${i === cur ? "cur" : ""}" data-j="${i}" aria-label="Question ${i + 1}">${i + 1}</button>`).join("")}</div>
-          <button class="btn violet" id="submit" style="width:100%;justify-content:center;margin-top:18px">Submit exam</button></div></div>`;
-      tickT();
-      $$(".opt").forEach((b) => (b.onclick = () => { ans[cur] = +b.dataset.i; FX.sfx.click(); if (cur < qs.length - 1) { cur++; } draw(); }));
-      $("#flag").onclick = () => { flags[cur] = !flags[cur]; draw(); };
-      $("#prev").onclick = () => { cur--; draw(); };
-      $("#nxt").onclick = () => { cur++; draw(); };
-      $$(".navgrid button").forEach((b) => (b.onclick = () => { cur = +b.dataset.j; draw(); }));
-      $("#submit").onclick = () => {
-        const open = ans.filter((a) => a === null).length;
-        if (!open || confirm(`${open} question(s) unanswered. Submit anyway?`)) submit();
-      };
-    }
-    function submit() {
-      clearInterval(timer);
-      const by = {};
-      DOMAINS.forEach((d) => (by[d.key] = { r: 0, t: 0 }));
-      let right = 0;
-      qs.forEach(({ q }, i) => { const ok = ans[i] === q.a; by[q.d].t++; if (ok) { by[q.d].r++; right++; } grade(q.id, ok); });
-      const score = Math.round((right / qs.length) * 100), pass = score >= 70;
-      S.exams.push({ date: new Date().toISOString(), score, minutes, by: Object.fromEntries(Object.entries(by).map(([k, v]) => [k, Math.round((v.r / v.t) * 100)])) });
-      save(); addXP(right * 4);
-      const wrong = qs.map((x, i) => ({ ...x, i })).filter(({ q, i }) => ans[i] !== q.a);
-      view.innerHTML = `<div class="card" style="text-align:center;padding:40px">
-          <div class="eyebrow">Exam result</div>
-          <div style="display:flex;justify-content:center;align-items:center;gap:30px;flex-wrap:wrap;margin:20px 0">
-            ${ring(score, `${right}/${qs.length}`, pass ? "#34d399" : "#f87171", 180, 10)}
-            <div class="stamp ${pass ? "pass" : "fail"}">${pass ? "PASS" : "FAIL"}</div></div>
-          <p class="muted">${pass ? "You'd clear the 70% bar. Now do it again under a shorter timer." : "Below 70%. The bars below show exactly where the points went."}</p></div>
-        <div class="card dom-bars" style="margin-top:18px"><h3>By domain</h3>
-          ${DOMAINS.map((d) => { const v = by[d.key], pc = Math.round((v.r / v.t) * 100);
-            return `<div class="db" style="--c:${pc >= 70 ? d.color : "#f87171"}"><span>${d.icon}</span><div class="track" title="${esc(d.name)}"><i data-w="${pc}%"></i></div><span class="pct">${v.r}/${v.t}</span></div>`; }).join("")}</div>
-        <div class="card" style="margin-top:18px"><h3>Review your misses (${wrong.length})</h3>
-          ${wrong.map(({ q, i }) => `<div class="review-item">${domTag(q.d)}<p><b>${esc(q.q)}</b></p>
-            ${ans[i] !== null ? `<div class="bad">Your answer: ${esc(q.o[ans[i]])}</div>` : `<div class="bad">Not answered</div>`}
-            <div class="ok">✔ ${esc(q.o[q.a])}</div><p class="muted" style="margin:6px 0 0">${esc(q.e)}</p></div>`).join("") || `<p class="muted">Nothing to review. Perfect score! 🏆</p>`}
-          <div class="row" style="margin-top:16px"><button class="btn" id="retry">⏱️ New exam</button><a class="btn ghost" href="#/">🛰️ HQ</a></div></div>`;
-      animateRings();
-      if (pass) { FX.sfx.level(); setTimeout(() => FX.confetti(innerWidth / 2, innerHeight / 3, 180), 1100); } else FX.sfx.wrong();
-      $("#retry").onclick = intro;
-    }
-    intro();
-  };
-
-  function histTable() {
-    return `<table class="hist"><tr><th>Date</th><th>Score</th><th>Timer</th><th>Result</th></tr>
-      ${S.exams.slice().reverse().map((e) => `<tr><td>${new Date(e.date).toLocaleString()}</td><td class="mono">${e.score}%</td><td>${e.minutes} min</td>
-        <td>${e.score >= 70 ? '<span style="color:var(--green)">PASS</span>' : '<span style="color:var(--red)">FAIL</span>'}</td></tr>`).join("")}</table>`;
+    return { x: pts[0][0], y: pts[0][1], ang: 0 };
   }
 
-  // ── FRIDA LAB ──
-  routes.frida = function () {
-    let move = "spy";
-    const MOVES = {
-      spy: { icon: "👁️", c: "#22d3ee", t: "SPY", d: "Print arguments and the return value. Use it for keys, PINs, plaintext and tokens." },
-      force: { icon: "🔨", c: "#f472b6", t: "FORCE", d: "Replace the return value. Use it for isRooted() → false or checkPin() → true." },
-      call: { icon: "📞", c: "#a3e635", t: "CALL", d: "Run a method yourself. Use it for getFlag() or decrypt(secret)." },
-    };
-    const FLOW = [
-      ["#22d3ee", "Recon", "Pull the APK (adb shell pm path, adb pull). List processes with <code>frida-ps -Uai</code>. Note the package name."],
-      ["#a78bfa", "Static first", "<code>apktool d</code> + <code>jadx-gui</code>. Read the manifest (exported, debuggable). Search: isRooted, exit, Cipher, equals, flag, http."],
-      ["#f472b6", "Find the blocker", "Root check? Pinning? A PIN compare? An exported component? Note the exact class + method + argument types."],
-      ["#a3e635", "Hook it", "Spawn with <code>frida -U -f pkg -l hook.js</code>. Pick a move: SPY, FORCE or CALL. Use the builder on the right."],
-      ["#fbbf24", "Plan B (stuck > 30 min)", "Objection (<code>android root disable</code>), a smali patch (<code>if-eqz → if-nez</code>, then rebuild, zipalign, sign), or re-implement the crypto offline."],
-      ["#34d399", "Capture the flag", "Write down the flag + the one-line method. Move on and don't gold-plate."],
-    ];
-    view.innerHTML = `<div class="eyebrow">Frida Lab</div><h1>Three moves. <span class="grad">Every lab.</span></h1>
-      <p class="muted">Almost every eMAPT lab flag falls to one of three Frida moves. Pick one, fill in the target, and copy the script.</p>
-      <div class="moves" style="margin-top:20px">${Object.entries(MOVES).map(([k, m]) => `<button class="card hover move ${k === move ? "on" : ""}" data-k="${k}" style="--c:${m.c}">
-        <span class="mi">${m.icon}</span><h3 style="margin-top:8px;color:${m.c}">${m.t}</h3><p class="muted" style="margin:0;font-size:14px">${m.d}</p></button>`).join("")}</div>
-      <div class="grid g2" style="margin-top:18px">
-        <div class="card"><h3>🧪 Script builder</h3><div class="form">
-          <label>Package (for the command)<input id="pkg" value="com.example.app"></label>
-          <label>Class (fully qualified)<input id="cls" value="com.example.app.Security"></label>
-          <label>Method (use $init for a constructor)<input id="mth" value="isRooted"></label>
-          <label>Argument types, comma-separated (blank = no overload)<input id="args" placeholder="java.lang.String, int"></label>
-          <label id="retL">Forced return value<input id="ret" value="false"></label>
-          <label id="callL">Call arguments (JS)<input id="cargs" placeholder='"1234"'></label>
-        </div></div>
-        <div class="card"><div class="row" style="justify-content:space-between"><h3>📜 hook.js</h3><button class="btn ghost" id="copy">📋 Copy</button></div>
-          <pre class="code" id="out"></pre><p class="muted mono" style="font-size:12px" id="cmd"></p></div>
-      </div>
-      <div class="section-title"><h2>🎯 The lab-app attack flow</h2><span class="muted">tap a step</span></div>
-      <div class="steps">${FLOW.map(([c, t, b], i) => `<button class="step" style="--c:${c}"><span class="n">${i + 1}</span><span><b>${t}</b><span class="body">${b}</span></span></button>`).join("")}</div>`;
-    const v = (id) => $("#" + id).value.trim();
-    function hl(code) {
-      return esc(code)
-        .replace(/(\/\/.*)/g, '<span class="cm">$1</span>')
-        .replace(/(&quot;.*?&quot;|&#39;.*?&#39;)/g, '<span class="str">$1</span>')
-        .replace(/\b(function|var|return|const|this)\b/g, '<span class="kw">$1</span>')
-        .replace(/\b(Java\.perform|Java\.use|console\.log|implementation|overload|\$new|\$init)\b/g, '<span class="fn">$1</span>')
-        .replace(/\b(true|false|\d+)\b/g, '<span class="num">$1</span>');
+  const ROUTE = [];
+  const ORDER = [];
+  let off = 0;
+  M.lines.forEach((line) => {
+    line.len = polyLen(line.pts);
+    line.off = off;
+    line.pts.forEach((p, i) => { if (i || !ROUTE.length) ROUTE.push(p); });
+    const k = line.stations.length;
+    line.stations.forEach((st, i) => {
+      st.line = line;
+      st.i = i;
+      st.idx = ORDER.length;
+      st.at = off + (line.len * (i + 1)) / k;
+      st.pos = pointOn(line.pts, (line.len * (i + 1)) / k);
+      st.playable = !!(st.brief && st.tasks);
+      ORDER.push(st);
+    });
+    line.playable = line.stations.some((s) => s.playable);
+    off += line.len;
+  });
+  const BYID = Object.fromEntries(ORDER.map((s) => [s.id, s]));
+
+  // ───────────── Progress (browser only) ─────────────
+  const KEY = "emapt-line-v1";
+  const fresh = () => ({ cleared: {}, seen: -1 });
+  function load() {
+    try {
+      const s = JSON.parse(localStorage.getItem(KEY));
+      if (s && typeof s.cleared === "object") return Object.assign(fresh(), s);
+    } catch (e) { /* storage blocked or empty */ }
+    return fresh();
+  }
+  let S = load();
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ }
+  }
+  const isCleared = (st) => !!S.cleared[st.id];
+  function trainIdx() {
+    let t = -1;
+    for (const st of ORDER) { if (isCleared(st)) t = st.idx; else break; }
+    return t;
+  }
+  const nextStation = () => ORDER[trainIdx() + 1] || null;
+  const isOpen = (st) => st.playable && (isCleared(st) || st.idx === trainIdx() + 1);
+  const statusOf = (st) => (isCleared(st) ? "cleared" : !st.playable ? "soon" : isOpen(st) ? "next" : "locked");
+  const clearedCount = () => ORDER.filter(isCleared).length;
+  const lateMin = (rec) => rec.miss * 2;
+  const resultText = (rec) => (rec.miss ? `Late +${lateMin(rec)} min` : "On time");
+
+  function hud() {
+    $("#hud").innerHTML = `<b>${clearedCount()}</b><span>/ ${ORDER.length}</span><span class="w">stations</span>`;
+  }
+
+  // ───────────── Small shared pieces ─────────────
+  const badge = (L, cls = "") => `<span class="lbadge ${cls}" style="--c:${L.color};--ci:${L.ink}">L${L.n}</span>`;
+
+  let stampN = 0;
+  function stampSVG(st, rec, cls = "") {
+    const L = st.line, id = "arc" + ++stampN;
+    const words = st.name.toUpperCase().split(" ");
+    const lines = words.length > 2 ? [words.slice(0, -1).join(" "), words[words.length - 1]] : words;
+    const longest = Math.max(...lines.map((l) => l.length));
+    const fs = Math.min(18, 118 / (longest * 0.62));
+    const y0 = lines.length === 1 ? 104 : 95;
+    const rot = ([...st.id].reduce((h, c) => h + c.charCodeAt(0), 0) % 15) - 7;
+    const date = new Date(rec.t).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }).toUpperCase();
+    return `<svg class="stamp ${cls}" viewBox="0 0 200 200" style="--c:${L.color}" role="img" aria-label="Stamp: ${esc(st.name)}, ${resultText(rec)}">
+  <g transform="rotate(${rot} 100 100)" filter="url(#ink)" fill="${L.color}" stroke="${L.color}">
+    <circle cx="100" cy="100" r="92" fill="none" stroke-width="6"/>
+    <circle cx="100" cy="100" r="81" fill="none" stroke-width="2"/>
+    <path id="${id}t" d="M34,100 A66,66 0 0,1 166,100" fill="none" stroke="none"/>
+    <path id="${id}b" d="M24,100 A76,76 0 0,0 176,100" fill="none" stroke="none"/>
+    <text class="st-arc" stroke="none"><textPath href="#${id}t" startOffset="50%" text-anchor="middle">EMAPT LINE</textPath></text>
+    <text class="st-arc" stroke="none"><textPath href="#${id}b" startOffset="50%" text-anchor="middle">L${L.n} · ${esc(L.name.toUpperCase())}</textPath></text>
+    <text class="st-date" x="100" y="70" text-anchor="middle" stroke="none">${date}</text>
+    ${lines.map((l, i) => `<text class="st-name" x="100" y="${y0 + i * (fs + 2)}" font-size="${fs.toFixed(1)}" text-anchor="middle" stroke="none">${esc(l)}</text>`).join("")}
+    <line x1="58" y1="121" x2="142" y2="121" stroke-width="2"/>
+    <text class="st-res" x="100" y="138" text-anchor="middle" stroke="none">${rec.miss ? `LATE +${lateMin(rec)} MIN` : "ON TIME"}</text>
+  </g></svg>`;
+  }
+
+  const DIAGRAMS = {
+    sandbox: `<svg class="diag" viewBox="0 0 560 220" role="img" aria-label="Two apps, each with its own Linux user and folder, separated by a wall. They can only talk through exported components.">
+  <defs><pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" class="hl"/></pattern>
+  <marker id="arw" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
+  <path d="M120,62 C190,24 370,24 440,62" class="flow acc" marker-end="url(#arw)"/>
+  <text x="280" y="18" class="dt s">IPC through exported components: allowed</text>
+  <rect x="10" y="62" width="200" height="124" rx="10" class="box"/>
+  <text x="110" y="90" class="dt b">App A</text><text x="110" y="110" class="dt s mono">user u0_a61</text>
+  <rect x="26" y="126" width="168" height="40" rx="6" class="box2"/><text x="110" y="151" class="dt s mono">/data/data/com.a/</text>
+  <rect x="350" y="62" width="200" height="124" rx="10" class="box"/>
+  <text x="450" y="90" class="dt b">App B</text><text x="450" y="110" class="dt s mono">user u0_a62</text>
+  <rect x="366" y="126" width="168" height="40" rx="6" class="box2"/><text x="450" y="151" class="dt s mono">/data/data/com.b/</text>
+  <rect x="262" y="56" width="36" height="136" fill="url(#hatch)" class="wall"/>
+  <path d="M196,146 L252,146" class="flow" marker-end="url(#arw)"/>
+  <path d="M216,139 l14,14 m0,-14 l-14,14" class="cross"/>
+  <text x="280" y="212" class="dt s">Linux file permissions + SELinux: direct reads blocked</text>
+</svg>`,
+    components: `<svg class="diag" viewBox="0 0 560 230" role="img" aria-label="Another app or adb sends Intents to the four exported components of the target app.">
+  <defs><marker id="arw2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
+  <rect x="10" y="80" width="140" height="70" rx="10" class="box2"/>
+  <text x="80" y="110" class="dt b">Other app</text><text x="80" y="130" class="dt s">or you, with adb</text>
+  <rect x="250" y="10" width="300" height="210" rx="12" class="box"/>
+  <text x="400" y="34" class="dt s">Target app (exported components)</text>
+  ${["Activity · a screen", "Service · background", "Receiver · events", "Provider · content://"].map((t, i) =>
+    `<rect x="290" y="${48 + i * 42}" width="220" height="32" rx="6" class="box2"/><text x="400" y="${69 + i * 42}" class="dt s">${t}</text>
+     <path d="M150,115 C200,115 230,${64 + i * 42} 286,${64 + i * 42}" class="flow acc" marker-end="url(#arw2)"/>`).join("")}
+  <text x="200" y="100" class="dt s b2">Intent</text>
+</svg>`,
+    trust: `<svg class="diag" viewBox="0 0 560 210" role="img" aria-label="The phone is controlled by the attacker; the server is controlled by you. The trust boundary is between them.">
+  <defs><marker id="arw3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker></defs>
+  <rect x="10" y="20" width="220" height="170" rx="12" class="box2"/>
+  <text x="120" y="46" class="dt b">Phone</text><text x="120" y="66" class="dt s">the attacker controls this</text>
+  ${["jadx reads the code", "apktool changes it", "Frida hooks it live"].map((t, i) => `<text x="120" y="${100 + i * 26}" class="dt s mono">${t}</text>`).join("")}
+  <line x1="280" y1="8" x2="280" y2="202" class="boundary acc"/>
+  <text x="280" y="206" class="dt s b2" dy="-2">trust boundary</text>
+  <rect x="330" y="20" width="220" height="170" rx="12" class="box"/>
+  <text x="440" y="46" class="dt b">Server</text><text x="440" y="66" class="dt s">you control this</text>
+  ${["Who is this user?", "May they do this?", "Is the input valid?"].map((t, i) => `<text x="440" y="${100 + i * 26}" class="dt s">${t}</text>`).join("")}
+  <path d="M232,170 L326,170" class="flow" marker-end="url(#arw3)"/>
+  <text x="280" y="160" class="dt s">requests can be forged</text>
+</svg>`,
+  };
+  const withDiagrams = (html) => html.replace(/\{\{diagram:(\w+)\}\}/g, (_, n) => `<figure class="diagwrap">${DIAGRAMS[n] || ""}</figure>`);
+
+  // ───────────── Network map ─────────────
+  // Station labels: try each side of the track and keep the first spot that hits no other label,
+  // station, line badge or the key. Computed once, because the map never changes shape.
+  const CENTER = [600, 380];
+  const LABELS = (() => {
+    const boxes = [[680, 545, 1060, 625]];
+    M.lines.forEach((L) => boxes.push([L.badge[0] - 24, L.badge[1] - 16, L.badge[0] + 24, L.badge[1] + 16]));
+    ORDER.forEach((s) => boxes.push([s.pos.x - 12, s.pos.y - 12, s.pos.x + 12, s.pos.y + 12]));
+    const p0 = M.start.pt;
+    boxes.push([p0[0] - 30, p0[1] - 18, p0[0] + 30, p0[1] + 18]);
+    const routeLen = polyLen(ROUTE);
+    for (let d = 0; d <= routeLen; d += 8) {
+      const p = pointOn(ROUTE, d);
+      boxes.push([p.x - 6, p.y - 6, p.x + 6, p.y + 6]);
     }
-    function build() {
-      const cls = v("cls") || "com.example.app.Target", mth = v("mth") || "method";
-      const types = v("args") ? v("args").split(",").map((s) => s.trim()).filter(Boolean) : [];
-      const params = types.map((_, i) => "a" + i).join(", ");
-      const ov = types.length ? `.overload(${types.map((t) => `"${t}"`).join(", ")})` : "";
-      const short = cls.split(".").pop();
-      let body;
-      if (move === "spy") body =
-`  ${short}.${mth}${ov}.implementation = function (${params}) {
-    console.log("[SPY] ${mth} called"${types.map((_, i) => ` + " a${i}=" + a${i}`).join("")});
-    var ret = this.${mth}(${params});
-    console.log("[SPY] ${mth} returned: " + ret);
-    return ret;
-  };`;
-      else if (move === "force") body =
-`  ${short}.${mth}${ov}.implementation = function (${params}) {
-    console.log("[FORCE] ${mth} -> ${v("ret") || "true"}");
-    return ${v("ret") || "true"};
-  };`;
-      else body =
-`  // CALL: static methods can be called on the class directly;
-  // instance methods need an object: $new(...) or Java.choose(...)
-  var obj = ${short}.$new();
-  var result = obj.${mth}(${v("cargs")});
-  console.log("[CALL] ${mth}(${v("cargs").replace(/"/g, "'")}) = " + result);`;
-      const code = `// ${MOVES[move].t} · generated by eMAPT Trainer
-Java.perform(function () {
-  var ${short} = Java.use("${cls}");
-${body}
-});`;
-      $("#out").innerHTML = hl(code); $("#out").dataset.raw = code;
-      $("#cmd").textContent = `$ frida -U -f ${v("pkg") || "com.example.app"} -l hook.js`;
-      $("#retL").style.display = move === "force" ? "" : "none";
-      $("#callL").style.display = move === "call" ? "" : "none";
-    }
-    $$(".move").forEach((b) => (b.onclick = () => {
-      move = b.dataset.k; FX.sfx.click();
-      $$(".move").forEach((x) => x.classList.toggle("on", x === b));
-      if (move === "force" && v("mth") === "getFlag") $("#mth").value = "isRooted";
-      if (move === "call" && v("mth") === "isRooted") $("#mth").value = "getFlag";
-      build();
-    }));
-    $$(".form input").forEach((i) => (i.oninput = build));
-    $("#copy").onclick = async () => {
-      try { await navigator.clipboard.writeText($("#out").dataset.raw); toast("📋 Script copied"); } catch (e) { toast("Copy failed: select the text manually"); }
+    const hits = (b, self) => b[0] < 4 || b[2] > 1196 || b[1] < 4 || b[3] > 756 ||
+      boxes.some((o, k) => k !== self && b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
+    const out = {};
+    ORDER.forEach((st) => {
+      const { x, y } = st.pos, w = st.name.length * (st.junction || st.central ? 7.8 : 7.1), h = 16;
+      const self = boxes.findIndex((o) => o[0] === x - 12 && o[1] === y - 12);
+      const dx = Math.cos(st.pos.ang), dy = Math.sin(st.pos.ang);
+      let n = Math.abs(dy) < 0.2 ? [0, st.idx % 2 ? 1 : -1] : [-dy, dx];
+      if (Math.abs(dy) >= 0.2 && n[0] * (CENTER[0] - x) + n[1] * (CENTER[1] - y) < 0) n = [-n[0], -n[1]];
+      const cands = st.central ? [[0, 1], [0, -1]] : [n, [-n[0], -n[1]], [0, -1], [0, 1], [1, 0], [-1, 0]];
+      const r = st.central ? 42 : st.junction ? 26 : 22;
+      const place = ([nx, ny]) => {
+        const a = nx > 0.3 ? "start" : nx < -0.3 ? "end" : "middle";
+        const lx = x + nx * r, ly = y + ny * r;
+        const x0 = a === "start" ? lx : a === "end" ? lx - w : lx - w / 2;
+        return { x: lx, y: ly, a, box: [x0 - 2, ly - h / 2, x0 + w + 2, ly + h / 2] };
+      };
+      const pick = cands.map(place).find((c) => !hits(c.box, self)) || place(cands[0]);
+      boxes.push(pick.box);
+      out[st.id] = pick;
+    });
+    return out;
+  })();
+  const labelFor = (st) => LABELS[st.id];
+
+  function mapSVG() {
+    const t = trainIdx();
+    let s = `<svg class="map" viewBox="0 0 1200 760" role="img" aria-labelledby="map-t map-d">
+<title id="map-t">eMAPT Line network map</title><desc id="map-d">Eight lines, one for each exam domain, from Platform 0 to eMAPT Central. ${clearedCount()} of ${ORDER.length} stations cleared.</desc>`;
+    // legend
+    s += `<g class="legend" transform="translate(690 560)">
+  <text class="lg-h" x="0" y="0">KEY</text>
+  <circle cx="10" cy="24" r="7" class="lg-st"/><text x="28" y="28">Station</text>
+  <circle cx="10" cy="50" r="10" class="lg-jn"/><text x="28" y="54">Interchange</text>
+  <line x1="150" y1="24" x2="200" y2="24" class="lg-soon"/><text x="210" y="28">Opens in Step 2</text>
+  <g transform="translate(174 50)">${trainShape()}</g><text x="210" y="54">You are here</text>
+</g>`;
+    M.lines.forEach((L) => {
+      s += `<polyline class="track${L.playable ? "" : " soon"}" points="${L.pts.map((p) => p.join(",")).join(" ")}" style="stroke:${L.color}"/>`;
+    });
+    M.lines.forEach((L) => {
+      s += `<a href="#/line/${L.key}" class="mbadge" aria-label="Line ${L.n}: ${esc(L.name)}"><rect x="${L.badge[0] - 22}" y="${L.badge[1] - 14}" width="44" height="28" rx="14" fill="${L.color}"/><text x="${L.badge[0]}" y="${L.badge[1] + 6}" fill="${L.ink}">L${L.n}</text></a>`;
+    });
+    const p0 = M.start.pt;
+    s += `<line x1="${p0[0]}" y1="${p0[1] - 16}" x2="${p0[0]}" y2="${p0[1] + 16}" class="terminus"/><text class="st-label b" x="${p0[0]}" y="${p0[1] + 32}" text-anchor="middle">${M.start.name}</text>`;
+    ORDER.forEach((st) => {
+      const st8 = statusOf(st), lab = labelFor(st), { x, y } = st.pos;
+      const href = st8 === "cleared" || st8 === "next" ? `#/s/${st.id}` : st.playable ? "" : `#/line/${st.line.key}`;
+      let mark;
+      if (st.central) mark = `<circle cx="${x}" cy="${y}" r="24" class="central"/><circle cx="${x}" cy="${y}" r="13" class="central-in"/>`;
+      else mark = `<circle cx="${x}" cy="${y}" r="${st.junction ? 11 : 8}" class="dot" style="--c:${st.line.color}"/>`;
+      const pulse = st8 === "next" ? `<circle cx="${x}" cy="${y}" r="16" class="pulse" style="stroke:${st.line.color}"/>` : "";
+      const label = `<text class="st-label${st.junction || st.central ? " b" : ""}" x="${lab.x.toFixed(1)}" y="${lab.y.toFixed(1)}" text-anchor="${lab.a}">${esc(st.name)}</text>`;
+      const inner = `<title>${esc(st.name)}: ${esc(st.topic)}</title>${pulse}<circle cx="${x}" cy="${y}" r="20" class="hit"/>${mark}${label}`;
+      s += href
+        ? `<a href="${href}" class="st ${st8}${st.junction ? " jn" : ""}">${inner}</a>`
+        : `<g class="st ${st8}${st.junction ? " jn" : ""}">${inner}</g>`;
+    });
+    const p = t >= 0 ? pointOn(ROUTE, ORDER[t].at) : pointOn(ROUTE, 0);
+    s += `<g class="train" id="train" transform="translate(${p.x} ${p.y}) rotate(${(p.ang * 180) / Math.PI})">${trainShape()}</g>`;
+    return s + "</svg>";
+  }
+  function trainShape() {
+    return `<g class="train-body"><rect x="-22" y="-9" width="44" height="18" rx="9"/><rect x="-14" y="-4" width="7" height="8" rx="1.5" class="win"/><rect x="-4" y="-4" width="7" height="8" rx="1.5" class="win"/><rect x="6" y="-4" width="7" height="8" rx="1.5" class="win"/><circle cx="17" cy="0" r="2.4" class="lamp"/></g>`;
+  }
+
+  function animateTrain() {
+    const g = $("#train"), t = trainIdx();
+    if (!g) return;
+    if (S.seen > t) { S.seen = t; save(); }
+    if (S.seen === t) return;
+    const from = S.seen >= 0 ? ORDER[S.seen].at : 0, to = ORDER[t].at;
+    S.seen = t;
+    save();
+    const place = (d) => {
+      const p = pointOn(ROUTE, d);
+      g.setAttribute("transform", `translate(${p.x.toFixed(1)} ${p.y.toFixed(1)}) rotate(${((p.ang * 180) / Math.PI).toFixed(1)})`);
     };
-    $$(".step").forEach((s) => (s.onclick = () => { s.classList.toggle("open"); FX.sfx.click(); }));
-    build();
+    if (reduced) return place(to);
+    place(from);
+    const dur = Math.max(1100, Math.min(3200, (to - from) * 7)), t0 = performance.now();
+    const ease = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / dur);
+      place(from + (to - from) * ease(k));
+      if (k < 1) requestAnimationFrame(step);
+      else g.classList.add("arrived");
+    };
+    setTimeout(() => requestAnimationFrame(step), 350);
+  }
+
+  function board(nx) {
+    const now = new Date(), clock = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    let rows, btn;
+    if (!nx) {
+      rows = `<div class="b-row main"><span class="b-dest">All lines complete</span></div><div class="b-row"><span>Next: the full mock exam</span><span class="b-stat">Step 2</span></div>`;
+      btn = `<a class="btn" href="#/pass">Open your Travel Pass</a>`;
+    } else if (!nx.playable) {
+      const L = nx.line;
+      rows = `<div class="b-row main"><span class="b-dest">${esc(L.name)} line</span>${badge(L)}</div>
+        <div class="b-row"><span>Lines 1–2 cleared. Well done.</span><span class="b-stat">Opens in Step 2</span></div>`;
+      btn = `<a class="btn" href="#/pass">See your stamps</a>`;
+    } else {
+      const L = nx.line;
+      rows = `<div class="b-row main"><span class="b-dest">${esc(nx.name)}</span>${badge(L)}</div>
+        <div class="b-row"><span>${esc(nx.topic)}</span><span class="b-stat">Boarding</span></div>`;
+      btn = `<a class="btn" href="#/s/${nx.id}">${trainIdx() < 0 ? "Board the first train" : "Board this train"} →</a>`;
+    }
+    return `<div class="board" role="group" aria-label="Next departure">
+      <div class="b-head"><span>Next departure</span><span class="b-clock">${clock}</span></div>${rows}</div>${btn}`;
+  }
+
+  function pageMap() {
+    const nx = nextStation();
+    view.innerHTML = `
+<section class="intro">
+  <div class="intro-txt">
+    <p class="kicker">Network map</p>
+    <h1>From your first <code>adb</code> command to <em>eMAPT Central</em>.</h1>
+    <p class="lede">Eight lines, one for each exam domain. Every station has a short briefing and a hands-on challenge. Clear it to get your ticket stamped, and the train moves on.</p>
+  </div>
+  <div class="depart">${board(nx)}</div>
+</section>
+<figure class="mapframe">${mapSVG()}</figure>
+<section class="lines" aria-label="Lines">
+  <h2 class="h-sec">Lines</h2>
+  ${M.lines.map((L) => {
+    const done = L.stations.filter(isCleared).length;
+    return `<a class="linerow${L.playable ? "" : " soon"}" href="#/line/${L.key}">
+      ${badge(L)}<span class="lr-name">${esc(L.name)}<small>${L.weight}% of the exam</small></span>
+      <span class="lr-dots" style="--c:${L.color}">${L.stations.map((s) => `<i class="${isCleared(s) ? "on" : ""}"></i>`).join("")}</span>
+      <span class="lr-stat">${L.playable ? `${done}/${L.stations.length}` : "Step 2"}</span></a>`;
+  }).join("")}
+</section>`;
+    animateTrain();
+  }
+
+  // ───────────── Line page (strip map) ─────────────
+  function pageLine(key) {
+    const L = M.lines.find((l) => l.key === key);
+    if (!L) return pageMap();
+    const nextL = M.lines[L.n];
+    const done = L.stations.filter(isCleared).length;
+    view.innerHTML = `
+<a class="back" href="#/">← Network map</a>
+<header class="linehead" style="--c:${L.color}">
+  ${badge(L, "big")}
+  <div><p class="kicker">Line ${L.n} · ${L.weight}% of the exam</p><h1>${esc(L.name)}</h1><p class="lede">${esc(L.blurb)}</p>
+  <p class="meta">${L.playable ? `${done} of ${L.stations.length} stations stamped` : "This line opens in Step 2. You can preview its stations below."}</p></div>
+</header>
+<ol class="strip" style="--c:${L.color}">
+  ${L.stations.map((st) => {
+    const s8 = statusOf(st), rec = S.cleared[st.id];
+    const stat = s8 === "cleared" ? `<span class="tag ok">${resultText(rec)}</span>` : s8 === "next" ? `<span class="tag go">Next stop</span>` : s8 === "locked" ? `<span class="tag">Locked</span>` : `<span class="tag">Step 2</span>`;
+    const body = `<span class="dot${st.junction || st.central ? " jn" : ""}"></span><span class="s-name">${esc(st.name)}<small>${esc(st.topic)}</small></span>${stat}`;
+    return `<li class="stop ${s8}">${s8 === "cleared" || s8 === "next" ? `<a href="#/s/${st.id}">${body}</a>` : `<div>${body}</div>`}</li>`;
+  }).join("")}
+</ol>
+${nextL ? `<a class="change" href="#/line/${nextL.key}">Change here for ${badge(nextL)} <b>${esc(nextL.name)}</b> →</a>` : ""}`;
+  }
+
+  // ───────────── Station: briefing → challenge → stamp ─────────────
+  let run = null;
+  const TYPE = { mcq: "Question", term: "Terminal", spot: "Spot the bug", hook: "Fill the hook", match: "Match", order: "Order the steps" };
+
+  function pageStation(id) {
+    const st = BYID[id];
+    if (!st) return pageMap();
+    const L = st.line;
+    if (!st.playable || !isOpen(st)) {
+      const nx = nextStation();
+      view.innerHTML = `<a class="back" href="#/line/${L.key}">← ${esc(L.name)} line</a>
+<div class="card closed"><p class="kicker">${st.playable ? "Locked" : "Under construction"}</p><h1>${esc(st.name)}</h1>
+<p>${st.playable ? `Stations open in order. Your train is due at <b>${esc(nx.name)}</b> first.` : "This station opens in Step 2."}</p>
+${nx && nx.playable ? `<a class="btn" href="#/s/${nx.id}">Go to ${esc(nx.name)} →</a>` : `<a class="btn" href="#/">Back to the map</a>`}</div>`;
+      return;
+    }
+    run = { st, phase: "brief", ti: 0, miss: 0 };
+    renderStation();
+  }
+
+  function renderStation() {
+    const { st, phase } = run, L = st.line;
+    const steps = ["Briefing", "Challenge", "Stamp"], cur = { brief: 0, task: 1, stamp: 2 }[phase];
+    view.innerHTML = `
+<a class="back" href="#/line/${L.key}">← ${esc(L.name)} line</a>
+<header class="sign" style="--c:${L.color};--ci:${L.ink}">
+  <div class="sign-bar">${badge(L)}<span>${esc(L.name)}</span><span class="sign-no">Stop ${st.i + 1} of ${L.stations.length}</span></div>
+  <h1 class="sign-name">${esc(st.name)}</h1>
+  <p class="sign-topic">${esc(st.topic)}</p>
+</header>
+<ol class="steps" style="--c:${L.color}" aria-label="Progress">${steps.map((n, i) => `<li class="${i < cur ? "done" : i === cur ? "cur" : ""}"${i === cur ? ' aria-current="step"' : ""}><i></i>${n}</li>`).join("")}</ol>
+<section id="stage" class="stage" style="--c:${L.color};--ci:${L.ink}"></section>`;
+    const stage = $("#stage");
+    if (phase === "brief") {
+      stage.innerHTML = `<article class="card brief">${withDiagrams(st.brief)}</article>
+<div class="actions"><button class="btn" id="go">Start the challenge →</button><span class="muted">${st.tasks.length} tasks</span></div>`;
+      $("#go").onclick = () => { run.phase = "task"; run.ti = 0; renderStation(); scrollToStage(); };
+    } else if (phase === "task") {
+      const t = st.tasks[run.ti];
+      stage.innerHTML = `<div class="taskhead"><span class="tasktype">${TYPE[t.type]}</span><span class="muted">Task ${run.ti + 1} of ${st.tasks.length}</span></div>
+<article class="card task" id="task"></article><div id="fb" aria-live="polite"></div>`;
+      ENGINES[t.type](t, $("#task"), taskDone);
+    } else {
+      const prev = S.cleared[st.id];
+      const rec = { t: Date.now(), miss: run.miss };
+      if (!prev || rec.miss < prev.miss) S.cleared[st.id] = rec;
+      save();
+      hud();
+      const nx = nextStation();
+      stage.innerHTML = `
+<div class="ticket" style="--c:${L.color}">
+  <div class="tk-main">
+    <p class="kicker">eMAPT Line · single journey</p>
+    <h2>${esc(st.name)}</h2>
+    <dl>
+      <div><dt>Line</dt><dd>L${L.n} ${esc(L.name)}</dd></div>
+      <div><dt>Tasks</dt><dd>${st.tasks.length}</dd></div>
+      <div><dt>Wrong tries</dt><dd>${rec.miss}</dd></div>
+      <div><dt>Arrival</dt><dd>${resultText(rec)}</dd></div>
+    </dl>
+    ${prev && prev.miss <= rec.miss ? `<p class="muted small">Your best ride here is still ${resultText(prev).toLowerCase()}.</p>` : ""}
+  </div>
+  <div class="tk-stub">${stampSVG(st, rec, "land")}</div>
+</div>
+<div class="actions">
+  <a class="btn" href="#/">${nx && nx.playable ? `Ride on to ${esc(nx.name)} →` : "Back to the map →"}</a>
+  <button class="btn ghost" id="again">Ride this station again</button>
+</div>`;
+      $("#again").onclick = () => { run = { st, phase: "brief", ti: 0, miss: 0 }; renderStation(); };
+    }
+  }
+  const scrollToStage = () => { const s = $(".steps"); if (s) s.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" }); };
+
+  function taskDone(miss, e, reveal) {
+    run.miss += miss;
+    const last = run.ti === run.st.tasks.length - 1;
+    const head = reveal ? "Not this time" : miss ? `Solved, after ${miss} wrong ${miss > 1 ? "tries" : "try"}` : "Correct, first try";
+    $("#fb").innerHTML = `<div class="fb ${miss ? "late" : "ok"}">
+  <p class="fb-head">${head}${miss ? ` <span>+${miss * 2} min</span>` : ""}</p>
+  ${reveal ? `<p>${reveal}</p>` : ""}<p>${e}</p>
+  <button class="btn" id="next">${last ? "Get your ticket stamped →" : "Next task →"}</button></div>`;
+    const b = $("#next");
+    b.onclick = () => {
+      if (last) run.phase = "stamp"; else run.ti++;
+      renderStation();
+      scrollToStage();
+    };
+    b.focus({ preventScroll: true });
+    $("#fb").scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest" });
+  }
+
+  const shake = (el) => { el.classList.remove("shake"); void el.offsetWidth; el.classList.add("shake"); };
+
+  // ───────────── The 6 challenge engines ─────────────
+  const ENGINES = {
+    mcq(t, el, done) {
+      const q = Q[t.id];
+      const ord = shuffle(q.o.map((_, i) => i));
+      el.innerHTML = `<p class="q">${esc(q.q)}</p><div class="opts">${ord.map((oi, k) =>
+        `<button class="opt" data-i="${oi}"><span class="key">${"ABCD"[k]}</span><span>${esc(q.o[oi])}</span></button>`).join("")}</div>`;
+      $$(".opt", el).forEach((b) => (b.onclick = () => {
+        const ok = +b.dataset.i === q.a;
+        $$(".opt", el).forEach((x) => { x.disabled = true; if (+x.dataset.i === q.a) x.classList.add("right"); });
+        if (!ok) b.classList.add("wrong");
+        done(ok ? 0 : 1, esc(q.e), ok ? null : `The answer is <b>${esc(q.o[q.a])}</b>.`);
+      }));
+    },
+
+    term(t, el, done) {
+      let tries = 0;
+      el.innerHTML = `<p class="q">${t.prompt}</p>
+<div class="term"><div class="term-bar"><i></i><i></i><i></i><span>student@lab: ~</span></div>
+<div class="term-out" id="tout"></div>
+<form class="term-line" autocomplete="off"><label class="ps" for="tin">$</label><input id="tin" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="type a command and press Enter"><button class="btn sm" type="submit">Run</button></form></div>
+<p class="hint" hidden></p>`;
+      const out = $("#tout", el), inp = $("#tin", el), form = $("form", el), hint = $(".hint", el);
+      const print = (txt, cls) => { const d = document.createElement("div"); d.className = cls; d.innerHTML = txt; out.appendChild(d); out.scrollTop = out.scrollHeight; };
+      const KNOWN = ["adb", "ls", "apktool", "dumpsys", "pm", "su", "cat", "frida", "jadx", "jadx-gui", "objection", "am", "content"];
+      form.onsubmit = (e) => {
+        e.preventDefault();
+        const raw = inp.value, cmd = raw.trim().replace(/\s+/g, " ");
+        if (!cmd) return;
+        inp.value = "";
+        print(`<span class="ps">$</span> ${esc(raw.trim())}`, "cmd");
+        if (t.accept.some((r) => r.test(cmd))) {
+          print(esc(t.out), "out");
+          inp.disabled = true;
+          $("button", form).disabled = true;
+          return done(tries, t.e);
+        }
+        tries++;
+        const w = cmd.split(" ")[0];
+        print(KNOWN.includes(w) ? "That command runs, but it does not do what this task asks. Check the arguments." : `bash: ${esc(w)}: command not found`, "err");
+        if (tries >= 2) { hint.hidden = false; hint.innerHTML = `<b>Hint:</b> ${t.hint}`; }
+        if (tries >= 4) hint.innerHTML += `<br><b>Answer:</b> <code>${esc(t.solution)}</code>`;
+        shake($(".term", el));
+      };
+      inp.focus({ preventScroll: true });
+    },
+
+    spot(t, el, done) {
+      const bugs = Object.keys(t.bugs).map(Number), found = new Set();
+      let miss = 0;
+      el.innerHTML = `<p class="q">${t.prompt}</p>
+<div class="code"><div class="code-bar"><span>${esc(t.file)}</span><span class="found">0 / ${bugs.length} found</span></div>
+<ol class="codelines">${t.lines.map((l, i) => `<li><button class="ln" data-i="${i}"><code>${esc(l)}</code></button></li>`).join("")}</ol></div>
+<div class="linenote" aria-live="polite"></div>`;
+      const note = $(".linenote", el);
+      $$(".ln", el).forEach((b) => (b.onclick = () => {
+        const i = +b.dataset.i;
+        if (found.has(i) || b.classList.contains("fine")) return;
+        if (t.bugs[i]) {
+          found.add(i);
+          b.classList.add("bug");
+          note.className = "linenote bad";
+          note.innerHTML = `<b>Line ${i + 1}:</b> ${t.bugs[i]}`;
+          $(".found", el).textContent = `${found.size} / ${bugs.length} found`;
+          if (found.size === bugs.length) {
+            $$(".ln", el).forEach((x) => (x.disabled = true));
+            done(miss, `${bugs.map((n) => `<b>Line ${n + 1}:</b> ${t.bugs[n]}`).join("<br>")}<br>${t.e}`);
+          }
+        } else {
+          miss++;
+          b.classList.add("fine");
+          shake(b);
+          note.className = "linenote";
+          note.innerHTML = `<b>Line ${i + 1} is fine.</b> ${t.notes && t.notes[i] ? t.notes[i] : ""}`;
+        }
+      }));
+    },
+
+    hook(t, el, done) {
+      let miss = 0;
+      const code = esc(t.code).replace(/\{(\d)\}/g, (_, n) => {
+        const b = t.blanks[n];
+        return `<select class="blank" data-n="${n}" aria-label="Blank ${+n + 1}"><option value="">choose…</option>${shuffle(b.o.map((_, i) => i)).map((i) => `<option value="${i}">${esc(b.o[i])}</option>`).join("")}</select>`;
+      });
+      el.innerHTML = `<p class="q">${t.prompt}</p>
+<div class="code"><div class="code-bar"><span>hook.js</span><span>frida -U -f com.els.safenote -l hook.js</span></div><pre class="hookcode">${code}</pre></div>
+<div class="actions"><button class="btn" id="runhook">Run the hook ▸</button><span class="muted small" id="hmsg"></span></div>
+<div class="term-out solo" hidden></div>`;
+      const sels = $$(".blank", el), msg = $("#hmsg", el), out = $(".term-out", el);
+      sels.forEach((s) => (s.onchange = () => s.classList.remove("wrong")));
+      $("#runhook", el).onclick = () => {
+        if (sels.some((s) => s.value === "")) { msg.textContent = "Fill every blank first."; return; }
+        const bad = sels.filter((s) => +s.value !== t.blanks[s.dataset.n].a);
+        out.hidden = false;
+        if (bad.length) {
+          miss++;
+          bad.forEach((s) => s.classList.add("wrong"));
+          msg.textContent = `${bad.length} blank${bad.length > 1 ? "s are" : " is"} wrong. Try again.`;
+          out.innerHTML = `<div class="err">Error: the hook did not change the method. Check the red blank${bad.length > 1 ? "s" : ""}.</div>`;
+          shake($(".code", el));
+          return;
+        }
+        sels.forEach((s) => { s.disabled = true; s.classList.add("right"); });
+        $("#runhook", el).disabled = true;
+        msg.textContent = "";
+        out.innerHTML = `<div class="out">${esc(t.out)}</div>`;
+        done(miss, t.e);
+      };
+    },
+
+    match(t, el, done) {
+      const L = shuffledIdx(t.pairs.length), R = shuffledIdx(t.pairs.length);
+      el.innerHTML = `<p class="q">${t.prompt}</p>
+<div class="match"><div class="col">${L.map((i) => `<button class="chip" data-s="l" data-i="${i}">${esc(t.pairs[i][0])}</button>`).join("")}</div>
+<div class="col">${R.map((i) => `<button class="chip" data-s="r" data-i="${i}">${esc(t.pairs[i][1])}</button>`).join("")}</div></div>
+<p class="muted small">Tap an item, then tap its partner in the other column.</p>`;
+      let sel = null, miss = 0, n = 0;
+      $$(".chip", el).forEach((c) => (c.onclick = () => {
+        if (c.classList.contains("done")) return;
+        if (!sel || sel.dataset.s === c.dataset.s) {
+          if (sel) sel.classList.remove("sel");
+          sel = sel === c ? null : c;
+          if (sel) sel.classList.add("sel");
+          return;
+        }
+        if (sel.dataset.i === c.dataset.i) {
+          n++;
+          [sel, c].forEach((x) => { x.classList.remove("sel"); x.classList.add("done"); x.disabled = true; x.dataset.n = n; });
+          sel = null;
+          if (n === t.pairs.length) done(miss, t.e);
+        } else {
+          miss++;
+          shake(c); shake(sel);
+          sel.classList.remove("sel");
+          sel = null;
+        }
+      }));
+    },
+
+    order(t, el, done) {
+      const idx = shuffledIdx(t.steps.length);
+      let next = 0, miss = 0;
+      el.innerHTML = `<p class="q">${t.prompt}</p><ol class="seq"></ol>
+<div class="pool">${idx.map((i) => `<button class="chip" data-i="${i}">${esc(t.steps[i])}</button>`).join("")}</div>
+<p class="muted small">Tap the steps in order, starting with the first one.</p>`;
+      const seq = $(".seq", el);
+      $$(".pool .chip", el).forEach((c) => (c.onclick = () => {
+        if (+c.dataset.i !== next) { miss++; shake(c); return; }
+        const li = document.createElement("li");
+        li.textContent = t.steps[next];
+        seq.appendChild(li);
+        c.remove();
+        if (++next === t.steps.length) done(miss, t.e);
+      }));
+    },
   };
 
-  // ── PROFILE ──
-  routes.profile = function () {
-    const lvl = levelFor(S.xp);
-    view.innerHTML = `<div class="eyebrow">Agent profile</div><h1>LV ${lvl} · <span class="grad">${esc(title(lvl))}</span></h1>
-      <div class="grid g3" style="margin-top:20px">
-        <div class="card stat"><span style="font-size:34px">⚡</span><div><div class="big" data-count="${S.xp}" data-suffix="">0</div><div class="lbl">total XP</div></div></div>
-        <div class="card stat"><span style="font-size:34px">✍️</span><div><div class="big" data-count="${S.answered}" data-suffix="">0</div><div class="lbl">answers</div></div></div>
-        <div class="card stat"><span style="font-size:34px">🎯</span><div><div class="big" data-count="${S.answered ? Math.round((S.correct / S.answered) * 100) : 0}">0</div><div class="lbl">accuracy</div></div></div></div>
-      <div class="grid g2" style="margin-top:18px">
-        <div class="card"><h3>Settings</h3>
-          <label class="switch"><span>🔊 Sound effects</span><input type="checkbox" id="snd" ${S.settings.sound ? "checked" : ""}></label>
-          <label class="switch"><span>✨ Animations</span><input type="checkbox" id="mot" ${S.settings.motion ? "checked" : ""}></label>
-          <h3 style="margin-top:20px">Move progress between devices</h3>
-          <p class="muted" style="font-size:14px">Progress lives in this browser. Export it on one device and import it on another.</p>
-          <div class="row"><button class="btn ghost" id="exp">⬇️ Export</button><label class="btn ghost" style="cursor:pointer">⬆️ Import<input type="file" id="imp" accept="application/json" hidden></label>
-            <button class="btn danger" id="rst">Reset</button></div></div>
-        <div class="card"><h3>Mock exam history</h3>${S.exams.length ? histTable() : '<p class="muted">No exams yet. <a href="#/exam">Take your first one →</a></p>'}</div></div>`;
-    animateRings();
-    $("#snd").onchange = (e) => { S.settings.sound = e.target.checked; save(); applySettings(); };
-    $("#mot").onchange = (e) => { S.settings.motion = e.target.checked; save(); applySettings(); };
+  // ───────────── Travel Pass ─────────────
+  function pagePass() {
+    const n = clearedCount(), recs = Object.values(S.cleared), onTime = recs.filter((r) => !r.miss).length;
+    view.innerHTML = `
+<header class="passhead"><p class="kicker">Travel Pass</p><h1>Your stamps</h1>
+<div class="stats"><div><b>${n}</b><span>stations stamped</span></div><div><b>${n ? Math.round((onTime / n) * 100) : 0}%</b><span>on time</span></div><div><b>${ORDER.filter((s) => s.playable).length}</b><span>stations open now</span></div></div></header>
+${M.lines.map((L) => `<section class="passline" style="--c:${L.color}">
+  <h2>${badge(L)} ${esc(L.name)} ${L.playable ? "" : '<span class="tag">Step 2</span>'}</h2>
+  <div class="stamps">${L.stations.map((st) => S.cleared[st.id]
+    ? `<a class="slot" href="#/s/${st.id}">${stampSVG(st, S.cleared[st.id])}<span>${esc(st.name)}</span></a>`
+    : `<div class="slot empty"><i></i><span>${esc(st.name)}</span></div>`).join("")}</div>
+</section>`).join("")}
+<section class="card tools"><h2>Move your progress</h2>
+<p class="muted">Progress is saved in this browser only. To continue on another device, export it here and import the file there.</p>
+<div class="actions"><button class="btn" id="exp">Export progress</button><label class="btn ghost" for="imp">Import progress</label><input type="file" id="imp" accept="application/json,.json" hidden><button class="btn ghost danger" id="rst">Reset everything</button></div>
+<p class="muted small" id="pmsg" aria-live="polite"></p></section>`;
+    const msg = $("#pmsg");
     $("#exp").onclick = () => {
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 2)], { type: "application/json" }));
-      a.download = `emapt-progress-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: "application/json" }));
+      a.download = "emapt-line-progress.json";
+      a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     };
-    $("#imp").onchange = async (e) => {
-      const f = e.target.files[0]; if (!f) return;
-      try {
-        const data = JSON.parse(await f.text());
-        if (typeof data !== "object" || data === null || !("cards" in data)) throw new Error("bad file");
-        S = Object.assign(fresh(), data); save(); applySettings(); toast("✅ Progress imported"); go();
-      } catch (err) { toast("❌ That file isn't an eMAPT Trainer export"); }
+    $("#imp").onchange = (e) => {
+      const f = e.target.files[0];
+      if (!f) return;
+      f.text().then((txt) => {
+        const d = JSON.parse(txt), cl = {};
+        Object.entries(d.cleared || {}).forEach(([k, v]) => { if (BYID[k] && v && typeof v.miss === "number") cl[k] = { t: +v.t || Date.now(), miss: v.miss }; });
+        S = Object.assign(fresh(), { cleared: cl });
+        save(); hud(); pagePass();
+        $("#pmsg").textContent = `Imported ${Object.keys(cl).length} stamps.`;
+      }).catch(() => (msg.textContent = "That file could not be read."));
     };
-    $("#rst").onclick = () => { if (confirm("Erase all progress in this browser?")) { S = fresh(); save(); applySettings(); toast("Progress reset"); go(); } };
-  };
+    $("#rst").onclick = () => {
+      if (!confirm("Erase all stamps and move the train back to Platform 0?")) return;
+      S = fresh(); save(); hud(); pagePass();
+    };
+  }
 
-  go();
+  // ───────────── Router ─────────────
+  function route() {
+    const [p, a] = location.hash.replace(/^#\/?/, "").split("/");
+    $$(".nav a").forEach((l) => l.classList.toggle("on", l.dataset.r === (p === "pass" ? "pass" : "map")));
+    if (p === "line") pageLine(a);
+    else if (p === "s") pageStation(a);
+    else if (p === "pass") pagePass();
+    else pageMap();
+    window.scrollTo(0, 0);
+    view.focus({ preventScroll: true });
+    hud();
+  }
+  addEventListener("hashchange", route);
+  route();
 })();
