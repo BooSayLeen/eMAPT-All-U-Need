@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>eMAPT Trainer</title>
+  <meta name="description" content="Interactive, animated study app for the INE eMAPT mobile application penetration testing exam.">
+  <meta name="theme-color" content="#060a13">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📱</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="bg" aria-hidden="true"></canvas>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a href="#/" class="logo" aria-label="eMAPT Trainer home">
+      <span class="logo-mark">◢◤</span>
+      <span class="glitch" data-text="eMAPT//TRAINER">eMAPT//TRAINER</span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="#/" data-route="hq"><span class="ni">🛰️</span><span class="nl">HQ</span></a>
+      <a href="#/map" data-route="map"><span class="ni">🪐</span><span class="nl">Map</span></a>
+      <a href="#/train" data-route="train"><span class="ni">⚔️</span><span class="nl">Train</span></a>
+      <a href="#/exam" data-route="exam"><span class="ni">⏱️</span><span class="nl">Mock Exam</span></a>
+      <a href="#/frida" data-route="frida"><span class="ni">🪝</span><span class="nl">Frida Lab</span></a>
+      <a href="#/profile" data-route="profile"><span class="ni">👤</span><span class="nl">Profile</span></a>
+    </nav>
+    <div class="hud-xp" id="hud-xp" title="Your level and XP"></div>
+  </header>
+
+  <main id="view" tabindex="-1"></main>
+
+  <div id="fx-layer" aria-hidden="true"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/data.js"></script>
+  <script src="js/fx.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
