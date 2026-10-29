@@ -2,6 +2,8 @@
 // Each line = one exam domain. `pts` are the map waypoints (viewBox 1200 x 760), drawn with 45° bends.
 // The last waypoint of a line is the first waypoint of the next one (interchange).
 // A station with `brief` and `tasks` is playable. A station without them shows as "under construction".
+// In any HTML text, [[word]] or [[shown text|key]] links to a GLOSSARY entry (tap for a definition).
+// {{diagram:name}}, {{glossary}} are filled in by app.js.
 //
 // Task types:
 //   mcq   { type, id }                                  → a question from window.QUESTIONS (js/data.js)
@@ -12,7 +14,81 @@
 //   order { type, prompt, steps:[in correct order], e }
 
 window.METRO = {
-  start: { name: "Platform 0", pt: [80, 90] },
+  start: {
+    id: "p0", name: "Platform 0", topic: "Start here: the exam, the words and the tools", pt: [80, 90],
+    brief: `
+<p>Welcome aboard. This game takes you from <b>zero</b> to <b>exam-ready</b> for the INE <b>eMAPT</b> (Mobile Application Penetration Tester).
+Read this page once. Throughout the game, tap any [[dotted word|gloss]] to see what it means.</p>
+<h3>1. The exam in one picture</h3>
+<table class="t">
+<tr><td><b>Time</b></td><td>12 hours, in INE's browser lab</td></tr>
+<tr><td><b>Questions</b></td><td>45: multiple choice, <b>flags</b> you find inside <b>2 Android lab apps</b>, and a few short written answers</td></tr>
+<tr><td><b>Lab</b></td><td>A Debian machine with an Android [[emulator]] and the tools. No internet</td></tr>
+<tr><td><b>Pass mark</b></td><td><b>70%</b></td></tr>
+</table>
+<p>The questions come from <b>8 domains</b>. Each line on the map is one domain, and its share of the exam is:</p>
+{{diagram:exam}}
+<div class="callout tip"><b>Exam tip:</b> candidates report that <b>both lab apps needed [[Frida|frida]]</b>. You practise it on the Dynamic line (L5).</div>
+<h3>2. How to ride</h3>
+<ul class="rules">
+<li><b>Stations open in order.</b> The train waits at the next one, and its dot pulses on the map.</li>
+<li>Every station has three parts: <b>Briefing</b> (read), <b>Challenge</b> (2 to 4 tasks) and <b>Stamp</b> (your ticket).</li>
+<li>Every wrong try makes you <b>2 minutes late</b>. No wrong tries means <b>On time</b>. You can ride any station again to improve.</li>
+<li>On a phone, <b>swipe left</b> to go on and <b>swipe right</b> to go back. On the map, use <b>+</b> and <b>−</b> to zoom, then drag.</li>
+</ul>
+<h3>3. Words you will meet</h3>
+{{glossary}}
+<h3>4. Your toolbox</h3>
+<table class="t">
+<tr><th>Tool</th><th>What it does</th><th>Typical command</th></tr>
+<tr><td><b>adb</b></td><td>Talks to the phone from your PC</td><td><code>adb shell</code></td></tr>
+<tr><td><b>jadx</b></td><td>Shows the app's code as readable Java</td><td><code>jadx-gui app.apk</code></td></tr>
+<tr><td><b>apktool</b></td><td>Unpacks the app to smali and the manifest, and rebuilds it</td><td><code>apktool d app.apk</code></td></tr>
+<tr><td><b>Frida</b></td><td>Hooks a running app with JavaScript</td><td><code>frida -U -f com.app -l hook.js</code></td></tr>
+<tr><td><b>objection</b></td><td>Ready-made Frida tricks (root and pinning bypass)</td><td><code>objection -g com.app explore</code></td></tr>
+<tr><td><b>Burp Suite</b></td><td>Reads and changes the app's web traffic</td><td>proxy on <code>127.0.0.1:8080</code></td></tr>
+</table>
+<div class="callout key"><b>Practice lab at home:</b> an Android Studio emulator with a <b>"Google APIs"</b> system image (not "Google Play", so <code>adb root</code> works),
+plus jadx, apktool, <code>pip install frida-tools objection</code>, a <b>frida-server</b> with the same version as your frida-tools, and Burp Suite Community.</div>
+<h3>5. How a mobile pentest flows</h3>
+{{diagram:flow}}
+<p>The map follows the same path. You start with the foundations and threat modeling, then move through static analysis, reverse engineering, dynamic testing, the API, malware and reporting.</p>`,
+    tasks: [
+      {
+        type: "term",
+        prompt: "First, check your setup. <b>Ask [[adb]] to list the devices it can see</b>, so you know the emulator is connected.",
+        accept: [/^adb devices( -l)?$/i],
+        hint: "It is <code>adb</code> followed by the plural of \"device\".",
+        solution: "adb devices",
+        out: "List of devices attached\nemulator-5554\tdevice",
+        e: "<code>device</code> means connected and ready. <code>unauthorized</code> means you must accept the prompt on the phone, and <code>offline</code> means you should run <code>adb kill-server</code> and try again. Once your device is listed, every other adb command will work.",
+      },
+      {
+        type: "match",
+        prompt: "Match each tool to its job.",
+        pairs: [
+          ["adb", "Talk to the phone from your PC"],
+          ["jadx", "Read the app's code as Java"],
+          ["apktool", "Unpack to smali and rebuild"],
+          ["Frida", "Hook a running app"],
+          ["Burp Suite", "Read and change web traffic"],
+        ],
+        e: "You will use all five in the exam. On each line you meet them in the order you need them.",
+      },
+      {
+        type: "order",
+        prompt: "Put the steps of a mobile pentest in order.",
+        steps: [
+          "Get the APK and see what it is (package, permissions)",
+          "Read the code without running it (static)",
+          "Run the app and hook it (dynamic)",
+          "Attack the backend API it talks to",
+          "Write up each finding with proof (report)",
+        ],
+        e: "Read first, then run, then go after the server, then write. If you get stuck in the exam, step back one stage: the answer is often in the code you have not read yet.",
+      },
+    ],
+  },
   lines: [
     // ─────────────────────────── LINE 1 · FOUNDATIONS ───────────────────────────
     {
@@ -23,25 +99,25 @@ window.METRO = {
         {
           id: "f-sandbox", name: "Sandbox Square", topic: "One Linux user per app",
           brief: `
-<p>Android runs on <b>Linux</b>. When you install an app, Android creates a <b>new Linux user</b> just for it (a <b>UID</b> such as <code>u0_a61</code>).
+<p>Android runs on <b>Linux</b>. When you install an app, Android creates a <b>new Linux user</b> just for it (a [[UID|uid]] such as <code>u0_a61</code>).
 The app's private folder belongs to that user only:</p>
 <pre>/data/data/&lt;package&gt;/      (same as /data/user/0/&lt;package&gt;/)
   ├─ shared_prefs/   small XML key-value files
   ├─ databases/      SQLite files
   └─ files/          anything else</pre>
-<p>App A cannot open app B's folder, because Linux file permissions stop it. <b>SELinux</b> is a second wall behind that.</p>
+<p>App A cannot open app B's folder, because Linux file permissions stop it. [[SELinux|selinux]] is a second wall behind that.</p>
 {{diagram:sandbox}}
 <div class="callout key"><b>Key idea:</b> the sandbox stops <i>direct</i> file access between apps. Apps can still talk through the doors they open on purpose (exported components). That is where most bugs are.</div>
-<div class="callout tip"><b>Exam tip:</b> on a <b>rooted</b> emulator you are root, so the walls are gone. You can read any app's private folder with <code>adb shell</code>. Check <code>shared_prefs</code> and <code>databases</code> first.</div>`,
+<div class="callout tip"><b>Exam tip:</b> on a [[rooted|root]] [[emulator]] you are root, so the walls are gone. You can read any app's private folder from an [[adb]] [[shell]] (<code>adb shell</code>). Check <code>shared_prefs</code> and <code>databases</code> first.</div>`,
           tasks: [
             {
               type: "term",
-              prompt: "You have a root shell on the lab emulator. <b>List the files in SafeNote's private folder</b> (the package is <code>com.els.safenote</code>).",
+              prompt: "You have a [[root]] [[shell]] on the lab emulator. <b>List the files in SafeNote's private folder</b> (the package is <code>com.els.safenote</code>).",
               accept: [/^(adb shell )?(su -c )?["']?ls( -[a-z]+)* \/data\/(data|user\/0)\/com\.els\.safenote\/?["']?$/i],
               hint: "The private folder is <code>/data/data/&lt;package&gt;/</code>, and <code>ls</code> lists a folder.",
               solution: "ls /data/data/com.els.safenote/",
               out: "cache  code_cache  databases  files  shared_prefs",
-              e: "<code>shared_prefs/</code> and <code>databases/</code> are the first places to look for tokens, PINs and passwords stored in cleartext (MASVS-STORAGE). In the old exam, the PIN hash was in <code>shared_prefs</code>.",
+              e: "<code>shared_prefs/</code> and <code>databases/</code> are the first places to look for tokens, PINs and passwords stored in cleartext ([[MASVS-STORAGE|masvs]]). In the old exam, the PIN hash was in <code>shared_prefs</code>.",
             },
             { type: "mcq", id: "f1" },
             { type: "mcq", id: "f4" },
@@ -56,11 +132,11 @@ The app's private folder belongs to that user only:</p>
 <tr><td><b>Activity</b></td><td>A screen</td><td><code>am start -n pkg/.Activity</code></td></tr>
 <tr><td><b>Service</b></td><td>Background work</td><td><code>am startservice</code></td></tr>
 <tr><td><b>Broadcast receiver</b></td><td>Listens for events</td><td><code>am broadcast -a ACTION</code></td></tr>
-<tr><td><b>Content provider</b></td><td>Shares data through <code>content://</code> URIs</td><td><code>content query --uri …</code></td></tr>
+<tr><td><b>Content provider</b></td><td>Shares data through <code>content://</code> [[URIs|uri]]</td><td><code>content query --uri …</code></td></tr>
 </table>
-<p>Components talk to each other with <b>Intents</b>, which are messages that say "open this" or "do this".</p>
+<p>Components talk to each other with [[Intents|intent]], which are messages that say "open this" or "do this".</p>
 {{diagram:components}}
-<div class="callout key"><b>Key idea:</b> if a component is <b>exported</b>, any app on the phone (and you, with <code>adb</code>) can call it. Exported and unprotected means it is part of the attack surface.</div>`,
+<div class="callout key"><b>Key idea:</b> if a component is [[exported]], any app on the phone (and you, with <code>adb</code>) can call it. Exported and unprotected means it is part of the attack surface.</div>`,
           tasks: [
             {
               type: "match",
@@ -79,7 +155,7 @@ The app's private folder belongs to that user only:</p>
         {
           id: "f-manifest", name: "Manifest Market", topic: "Reading AndroidManifest.xml",
           brief: `
-<p><code>AndroidManifest.xml</code> is the app's ID card. It lists <b>every component</b>, the <b>permissions</b> and some important <b>security flags</b>.
+<p><code>AndroidManifest.xml</code> (the [[manifest]]) is the app's ID card. It lists <b>every component</b>, the <b>permissions</b> and some important <b>security flags</b>.
 It is the first file you read in any test.</p>
 <table class="t">
 <tr><th>Flag</th><th>Why you care</th></tr>
@@ -115,7 +191,7 @@ It is the first file you read in any test.</p>
                 '</manifest>',
               ],
               bugs: {
-                4: "<b>debuggable=\"true\"</b> in a release app lets anyone attach a debugger (jdwp) and run code inside it. That is MASVS-RESILIENCE, and in the Top 10 it is M8 Security Misconfiguration.",
+                4: "<b>debuggable=\"true\"</b> in a release app lets anyone attach a [[debugger|jdwp]] (jdwp) and run code inside it. That is MASVS-RESILIENCE, and in the Top 10 it is M8 Security Misconfiguration.",
                 14: "<b>An exported provider with no permission.</b> Any app can query <code>content://com.els.safenote.notes</code> and read the notes. That is MASVS-PLATFORM.",
               },
               notes: {
@@ -159,7 +235,7 @@ It is the first file you read in any test.</p>
         {
           id: "f-packages", name: "Package Pier", topic: "Inside APK and IPA files", junction: true,
           brief: `
-<p>An <b>APK is just a ZIP file</b>. Rename it to <code>.zip</code> and you can open it:</p>
+<p>An <b>[[APK|apk]] is just a ZIP file</b>. Rename it to <code>.zip</code> and you can open it:</p>
 <pre>SafeNote.apk
   ├─ AndroidManifest.xml   binary XML (apktool decodes it)
   ├─ classes.dex           the app's code as Dalvik bytecode
@@ -167,9 +243,9 @@ It is the first file you read in any test.</p>
   ├─ res/  assets/         images, layouts, raw files
   ├─ lib/arm64-v8a/*.so    native C/C++ code
   └─ META-INF/             signing certificate (v1 scheme)</pre>
-<p><b>apktool</b> decodes it into readable XML and <b>smali</b>, and can rebuild it. <b>jadx</b> turns the dex back into readable Java.</p>
+<p>[[apktool]] decodes it into readable XML and [[smali]], and can rebuild it. [[jadx]] turns the [[dex]] back into readable Java.</p>
 <p>An iOS <b>IPA</b> is also a ZIP: <code>Payload/App.app/</code> contains the Mach-O binary and <code>Info.plist</code>.</p>
-<div class="callout key"><b>Key idea:</b> signing proves the APK has not been changed, and that updates come from the same developer. It does <b>not</b> hide or encrypt the code. If you patch an APK, you must sign it again.</div>`,
+<div class="callout key"><b>Key idea:</b> [[signing]] proves the APK has not been changed, and that updates come from the same developer. It does <b>not</b> hide or encrypt the code. If you patch an APK, you must sign it again.</div>`,
           tasks: [
             {
               type: "term",
@@ -208,7 +284,7 @@ It is the first file you read in any test.</p>
         {
           id: "t-stride", name: "STRIDE Street", topic: "6 kinds of threats",
           brief: `
-<p><b>STRIDE</b> is a checklist of the six things that can go wrong. Each letter breaks one security property:</p>
+<p>[[STRIDE|stride]] is a checklist of the six things that can go wrong. Each letter breaks one security property:</p>
 <table class="t">
 <tr><th></th><th>Threat</th><th>Breaks</th><th>Mobile example</th></tr>
 <tr><td><b>S</b></td><td>Spoofing</td><td>Authentication</td><td>Replaying a stolen session token</td></tr>
@@ -243,9 +319,9 @@ It is the first file you read in any test.</p>
 <p>The <b>attack surface</b> is every place where outside input can reach the app:</p>
 <table class="t">
 <tr><th>Entry point</th><th>Who can reach it</th></tr>
-<tr><td>Exported components, deep links</td><td>Any app on the phone, or a link in a web page</td></tr>
-<tr><td>WebViews</td><td>Whoever controls the loaded page</td></tr>
-<tr><td>Network traffic</td><td>Anyone on the same Wi-Fi (man-in-the-middle)</td></tr>
+<tr><td>[[Exported|exported]] components, [[deep links|deeplink]]</td><td>Any app on the phone, or a link in a web page</td></tr>
+<tr><td>[[WebViews|webview]]</td><td>Whoever controls the loaded page</td></tr>
+<tr><td>Network traffic</td><td>Anyone on the same Wi-Fi ([[man-in-the-middle|mitm]])</td></tr>
 <tr><td>Backend API</td><td>Anyone with an HTTP client, without the app at all</td></tr>
 <tr><td>Local storage, backups</td><td>Root, <code>adb backup</code>, a lost phone</td></tr>
 </table>
@@ -270,9 +346,17 @@ It is the first file you read in any test.</p>
           brief: `
 <p>A <b>trust boundary</b> is a line where data passes from something you don't control to something you do. The biggest one is between the <b>phone</b> and the <b>server</b>.</p>
 {{diagram:trust}}
-<p>Everything on the left side belongs to the attacker. They can read the code (jadx), change it (apktool), or hook it while it runs (Frida).
+<p>Everything on the left side belongs to the attacker. They can read the code (jadx), change it (apktool), or [[hook]] it while it runs ([[Frida|frida]]).
 So a check done <b>only in the app</b>, such as <code>isPremium()</code>, <code>isAdmin</code> or a PIN lock, is only a suggestion.</p>
-<div class="callout key"><b>Key idea:</b> any decision that matters, like who you are and what you may do, must be enforced by the <b>server</b>. If it isn't, one Frida hook can bypass it.</div>`,
+<div class="callout key"><b>Key idea:</b> any decision that matters, like who you are and what you may do, must be enforced by the <b>server</b>. If it isn't, one Frida hook can bypass it.</div>
+<div class="callout tip"><b>Frida in 30 seconds.</b> A Frida script is JavaScript that runs <i>inside</i> the app:
+<pre>Java.perform(function () {              // wait until the app's Java code is loaded
+  var Login = Java.use("com.app.Login");  // get a class by its full name
+  Login.checkPin.implementation = function (pin) {   // replace one of its methods
+    return true;                          // the new code: always say "PIN OK"
+  };
+});</pre>
+<code>Java.use</code> gets a class, and <code>.implementation</code> replaces a method. <code>Java.choose</code> finds objects that already exist, and <code>Java.cast</code> changes an object's type. You will need those later.</div>`,
           tasks: [
             {
               type: "hook",
@@ -293,7 +377,7 @@ So a check done <b>only in the app</b>, such as <code>isPremium()</code>, <code>
         {
           id: "t-top10", name: "Top Ten Terminal", topic: "OWASP Mobile Top 10 (2024)",
           brief: `
-<p>The <b>OWASP Mobile Top 10 (2024)</b> is the list of the most common mobile risks. Learn it in order:</p>
+<p>The [[OWASP Mobile Top 10 (2024)|top10]] is the list of the most common mobile risks. Learn it in order:</p>
 <table class="t">
 <tr><td><b>M1</b></td><td>Improper Credential Usage <span class="muted">(hardcoded keys)</span></td></tr>
 <tr><td><b>M2</b></td><td>Inadequate Supply Chain Security</td></tr>
@@ -328,7 +412,7 @@ So a check done <b>only in the app</b>, such as <code>isPremium()</code>, <code>
         {
           id: "t-masvs", name: "MASVS Junction", topic: "MASVS categories and the process", junction: true,
           brief: `
-<p><b>MASVS</b> (the standard) says what a secure app must do. <b>MASTG</b> (the testing guide) says how to test it. <b>MASWE</b> lists the weaknesses.
+<p>[[MASVS|masvs]] (the standard) says what a secure app must do. [[MASTG|mastg]] (the testing guide) says how to test it. [[MASWE|maswe]] lists the weaknesses.
 MASVS v2 has <b>8 categories</b>:</p>
 <table class="t">
 <tr><td><b>STORAGE</b></td><td>Data at rest</td><td><b>CRYPTO</b></td><td>Algorithms and keys</td></tr>
@@ -336,7 +420,7 @@ MASVS v2 has <b>8 categories</b>:</p>
 <tr><td><b>PLATFORM</b></td><td>IPC, WebViews, UI</td><td><b>CODE</b></td><td>Input, dependencies, updates</td></tr>
 <tr><td><b>RESILIENCE</b></td><td>Anti-tamper and anti-RE</td><td><b>PRIVACY</b></td><td>User data and tracking</td></tr>
 </table>
-<p>A <b>threat model</b> joins everything on this line into one process. Do it in about 10 minutes before you start attacking a lab app.</p>
+<p>A [[threat model|threatmodel]] joins everything on this line into one process. Do it in about 10 minutes before you start attacking a lab app.</p>
 <div class="callout key"><b>Next stop:</b> this is an interchange. The <b>Static Analysis</b> line starts here, and you will look for these same bugs in real code.</div>`,
           tasks: [
             {
@@ -449,4 +533,41 @@ MASVS v2 has <b>8 categories</b>:</p>
       ],
     },
   ],
+};
+
+// Tap-to-define words. Key → [title, plain-English definition].
+window.GLOSSARY = {
+  gloss: ["Dotted words", "Like this one. Tap any dotted word in a briefing or task to see a short definition."],
+  apk: ["APK", "The Android app file. It is a ZIP that holds the code, the resources and the manifest."],
+  package: ["Package name", "The app's unique ID, such as com.els.safenote. Most commands need it."],
+  adb: ["adb", "Android Debug Bridge. A command-line tool on your PC that talks to the phone or emulator: install apps, open a shell, copy files."],
+  emulator: ["Emulator", "A virtual Android phone that runs on your PC. The exam lab gives you one."],
+  root: ["Root", "Full admin (superuser) rights on the device. With root you can read every app's private files."],
+  shell: ["Shell", "A command line. adb shell opens one on the phone, so you can run Linux commands there."],
+  uid: ["UID", "A Linux user ID. Android gives every app its own UID, and that keeps apps apart."],
+  selinux: ["SELinux", "An extra Linux security layer. It has rules about what each app may touch, even beyond normal file permissions."],
+  manifest: ["Manifest", "AndroidManifest.xml, the app's ID card: its components, permissions and security flags."],
+  component: ["Component", "One of the four building blocks of an app: activity, service, broadcast receiver or content provider."],
+  intent: ["Intent", "A message that asks Android to open a screen, start a service or deliver a broadcast."],
+  ipc: ["IPC", "Inter-process communication: how apps talk to each other (Intents, content providers, bound services)."],
+  exported: ["Exported", "A component that other apps (and you, with adb) are allowed to call."],
+  uri: ["URI", "An address that points to data, such as content://com.app.notes/1 for a content provider."],
+  dex: ["dex", "Dalvik Executable: the app's compiled code (classes.dex). Android runs it, and jadx turns it back into Java."],
+  smali: ["smali", "A readable text form of dex code. apktool gives you smali, you can edit it, and then rebuild the app."],
+  jadx: ["jadx", "A decompiler. It shows the app's code as readable Java, so you can understand the logic."],
+  apktool: ["apktool", "Unpacks an APK into smali and readable XML (apktool d), and packs it back (apktool b)."],
+  signing: ["Signing", "Every APK carries a developer signature. Android refuses an APK that was changed but not signed again."],
+  jdwp: ["Debugger (JDWP)", "Java Debug Wire Protocol: how a debugger attaches to an app. It only works if the app is debuggable (or you are root)."],
+  frida: ["Frida", "A tool that injects JavaScript into a running app, so you can watch or change its functions while it runs."],
+  hook: ["Hook", "Code that catches a function call so you can see or change its arguments and what it returns."],
+  burp: ["Burp Suite", "An HTTP proxy. It sits between the app and the server so you can read and change every request."],
+  webview: ["WebView", "A small web browser inside an app. If it loads attacker content with JavaScript turned on, it can be abused."],
+  deeplink: ["Deep link", "A link such as myapp://open?id=5 that opens a screen inside an app. A web page or another app can send it."],
+  mitm: ["Man-in-the-middle", "An attacker who sits between the app and the server (for example on the same Wi-Fi) and reads or changes the traffic."],
+  stride: ["STRIDE", "A checklist of 6 threats: Spoofing, Tampering, Repudiation, Information disclosure, Denial of service, Elevation of privilege."],
+  threatmodel: ["Threat model", "A short plan of what could go wrong: the assets, the entry points, the threats and which ones matter most."],
+  masvs: ["MASVS", "OWASP Mobile Application Security Verification Standard: what a secure app must do, in 8 categories (STORAGE, CRYPTO, AUTH, NETWORK, PLATFORM, CODE, RESILIENCE, PRIVACY)."],
+  mastg: ["MASTG", "OWASP Mobile Application Security Testing Guide: how to test each MASVS requirement, step by step."],
+  maswe: ["MASWE", "OWASP Mobile Application Security Weakness Enumeration: a list of specific mobile weaknesses, linked to MASVS."],
+  top10: ["OWASP Mobile Top 10", "The 10 most common mobile risks. The current list is from 2024. M1 is Improper Credential Usage."],
 };

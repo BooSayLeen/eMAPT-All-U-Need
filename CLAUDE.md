@@ -16,6 +16,6 @@ commit **only** the `.enc` file (the plain file is git-ignored), and copy the pl
 
 ## Phase plan
 - **Phase 1 (rejected 2026-10-29):** a dark "HUD" site with pages. The owner wanted something game-like, light and unique, so it was replaced.
-- **Metro Step 1 (done 2026-10-29):** "eMAPT Line", a transit-map game with 8 lines (one per domain), stations (briefing → challenge → stamp), 6 challenge types, Travel Pass. Lines 1–2 are playable. Content is in `js/metro.js`.
+- **Metro Step 1 (done 2026-10-29):** "eMAPT Line", a transit-map game with 8 lines (one per domain), Platform 0 (start here), stations (briefing → challenge → stamp), 6 challenge types, tap-to-define glossary, zoom/swipe transitions, Travel Pass. Lines 1–2 are playable. Content and glossary are in `js/metro.js`.
 - **Metro Step 2 (next):** content for Lines 3–8, a "Rush Hour" timed exam per line, and eMAPT Central (the 45-Q mock).
 - Style rules: light paper, flat line colours, signage type (Overpass). No gradients, glow, glassmorphism or emoji icons.

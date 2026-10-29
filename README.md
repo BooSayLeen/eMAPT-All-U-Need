@@ -16,20 +16,23 @@ Ride from your first `adb` command to **eMAPT Central**.
 
 | | |
 |---|---|
+| 🚉 **Platform 0** | The first stop: the exam in one picture, how to play, a glossary, the toolbox, lab setup and the pentest flow |
 | 🗺️ **Network map** | 8 coloured lines, one for each exam domain, in learning order: Foundations → Threat Modeling → Static → RE → Dynamic → API → Malware → Reporting → **eMAPT Central** |
 | 🚉 **Station** | A short **briefing** (a beginner lesson, sometimes with a diagram), then a **challenge**, then a **ticket stamp** |
 | 🧩 **6 challenge types** | Terminal (type the real command) · Spot the bug (tap the bad line) · Fill the hook (Frida) · Match · Order the steps · Multiple-choice question |
 | 🚆 **The train** | Stations open in order. Clear one and the train moves along the map |
+| 📖 **Tap-to-define** | Dotted words in any briefing or task show a plain-English definition |
+| ✨ **Motion** | Zoom in when going deeper, zoom out going back, slide between steps. Swipe on phones. Map zoom with + / − and drag |
 | 🎫 **Travel Pass** | All your stamps. "On time" means no wrong tries. Export/import moves your progress between devices |
 
-**Step 1 (now):** the map, the engine, and **Line 1 Foundations + Line 2 Threat Modeling** (10 stations).
+**Step 1 (now):** the map, the engine, **Platform 0**, and **Line 1 Foundations + Line 2 Threat Modeling** (11 stations).
 **Step 2 (next):** Lines 3–8, a timed "Rush Hour" exam for each line, and eMAPT Central (the full 45-question mock).
 
 Progress is saved **in your browser only**.
 
 ## Files
 
-- `js/metro.js`: **the map and all station content** (briefings and challenges). The task formats are documented at the top of the file.
+- `js/metro.js`: **the map, all station content** (briefings and challenges) and the **glossary**. The formats are documented at the top of the file.
 - `js/data.js`: the **question bank** (99 multiple-choice questions). Stations use these with `{ type: "mcq", id: "f2" }`.
 - `js/app.js`: router, progress, map drawing, train animation, and the 6 challenge engines.
 - `css/style.css`: the light, printed-transit-map style.
